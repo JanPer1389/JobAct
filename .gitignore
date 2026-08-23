@@ -33,3 +33,7 @@ build/
 
 # Project notes
 JobAct .md
+
+package-lock.json
+
+next-env.d.ts

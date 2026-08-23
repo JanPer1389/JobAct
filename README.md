@@ -78,49 +78,49 @@ The current implementation is a frontend prototype. Camera, GPS, voice transcrip
 - Lucide React
 - pnpm
 
-## Getting Started
+## Repository Layout
 
-### Prerequisites
-
-- Node.js 20 or newer;
-- pnpm.
-
-### Install dependencies
-
-```bash
-pnpm install
-```
-
-### Run the development server
-
-```bash
-pnpm dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-### Create a production build
-
-```bash
-pnpm build
-```
-
-### Start the production server
-
-```bash
-pnpm start
-```
-
-## Project Structure
+This is a monorepo with the frontend prototype and the (not yet implemented) backend kept as separate projects:
 
 ```text
-app/                       Next.js routes and global styles
-components/jobact/         Product shell, shared UI, cards, and screens
-components/jobact/screens/ Individual prototype screens and flows
-lib/jobact/data.ts         Demo customers, reports, and product data
-lib/jobact/store.tsx       Local navigation and prototype state
-public/                    Icons and static assets
+frontend/   Next.js prototype — see frontend/README below and CLAUDE.md
+backend/    Python backend, managed with uv — see backend/README.md
 ```
+
+## Getting Started
+
+### Frontend
+
+Prerequisites: Node.js 20 or newer, pnpm.
+
+```bash
+cd frontend
+pnpm install
+pnpm dev     # http://localhost:3000
+pnpm build   # production build
+pnpm start   # run production build
+```
+
+```text
+frontend/app/                       Next.js routes and global styles
+frontend/components/jobact/         Product shell, shared UI, cards, and screens
+frontend/components/jobact/screens/ Individual prototype screens and flows
+frontend/lib/jobact/data.ts         Demo customers, reports, and product data
+frontend/lib/jobact/store.tsx       Local navigation and prototype state
+frontend/public/                    Icons and static assets
+```
+
+### Backend
+
+Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/).
+
+```bash
+cd backend
+uv sync
+uv run jobact-backend
+```
+
+The backend is currently an empty scaffold (`pyproject.toml` + `uv.lock`). All server-side behavior described below is still simulated in the frontend.
 
 ## Design Principles
 

@@ -1,0 +1,17 @@
+[project]
+name = "jobact-backend"
+version = "0.1.0"
+description = "JobAct backend API (not yet implemented)"
+readme = "README.md"
+authors = [
+    { name = "JanPer1389", email = "josefvorobyev133@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+jobact-backend = "jobact_backend:main"
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12.0"]
+build-backend = "uv_build"
