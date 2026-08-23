@@ -30,3 +30,6 @@ build/
 *.egg-info/
 .idea/
 .vscode/
+
+# Project notes
+JobAct .md
