@@ -30,6 +30,7 @@ async def test_postgres_accepts_connection() -> None:
         user=settings.postgres_user,
         password=settings.postgres_password,
         database=settings.postgres_db,
+        ssl=False,
     )
     try:
         result = await conn.fetchval("SELECT 1")
