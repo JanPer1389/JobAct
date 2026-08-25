@@ -46,3 +46,13 @@ module-name = "jobact"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Process-wide cached infra clients (e.g. the SQLAlchemy async engine in
+# jobact.shared.infrastructure.postgres.engine) hold connections bound to
+# whichever event loop created them. pytest-asyncio's per-function default
+# loop would hand a loop-A connection to a loop-B test and raise
+# "attached to a different loop" / "another operation is in progress".
+# Running the whole session on one event loop matches how the real app
+# runs (one loop for the process lifetime) and keeps cached clients valid
+# across tests.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
