@@ -46,6 +46,17 @@ module-name = "jobact"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# A transitive dependency (`caio`, pulled in via `aiofile`) installs its
+# own bundled tests as a top-level `tests` package with no `__init__.py`
+# into .venv/lib/*/site-packages, which collides with our own
+# `backend/tests/` as a namespace package (PEP 420) once anything imports
+# plain `tests.*` (e.g. `tests/fakes.py`, shared test infrastructure
+# imported across test suites -- see Task 0.4). `backend/` is not
+# otherwise on sys.path under pytest, so without this, `tests` resolves
+# ONLY to the stale site-packages copy and our real `tests/fakes.py` is
+# invisible. Putting rootdir on sys.path lets our `tests/` directory
+# participate in the namespace merge too.
+pythonpath = ["."]
 # Process-wide cached infra clients (e.g. the SQLAlchemy async engine in
 # jobact.shared.infrastructure.postgres.engine) hold connections bound to
 # whichever event loop created them. pytest-asyncio's per-function default
@@ -56,3 +67,16 @@ testpaths = ["tests"]
 # across tests.
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
+
+[tool.mypy]
+mypy_path = "src"
+# `explicit_package_bases` (paired with `mypy_path`) tells mypy to derive
+# each file's module name from the nearest of these roots instead of
+# walking up until it hits a directory with no `__init__.py`. Without it,
+# a full `mypy src tests` run sees `tests/fakes.py` both as bare "fakes"
+# (discovered directly under `tests/`) and as "tests.fakes" (resolved via
+# `from tests.fakes import ...` in test_ports.py) and refuses to proceed
+# ("Source file found twice under different module names") -- same
+# `tests`-as-namespace-package situation documented under
+# `[tool.pytest.ini_options]` above.
+explicit_package_bases = true
