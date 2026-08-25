@@ -33,7 +33,7 @@ import {
   StatusBadge,
   SyncIndicator,
 } from "../ui"
-import { Scroll } from "../shell"
+import { Page, ActionBar } from "../shell"
 import { Avatar } from "../cards"
 import {
   customers as allCustomers,
@@ -52,16 +52,8 @@ function useCustomer() {
   }
 }
 
-function FlowFooter({
-  children,
-}: {
-  children: React.ReactNode
-}) {
-  return (
-    <div className="shrink-0 border-t border-border bg-background/80 px-5 pb-8 pt-3 backdrop-blur-xl">
-      {children}
-    </div>
-  )
+function FlowFooter({ children }: { children: React.ReactNode }) {
+  return <ActionBar width="form">{children}</ActionBar>
 }
 
 /* ---------------------------- ADD CUSTOMER ---------------------------- */
@@ -74,14 +66,14 @@ export function AddCustomerScreen() {
   return (
     <>
       <ScreenHeader title="Add customer" onBack={back} />
-      <Scroll className="px-5 py-4">
+      <Page width="form">
         <div className="space-y-4">
           <Input id="name" label="Customer name" placeholder="e.g. Aurora Dental Clinic" value={name} onChange={(e) => setName(e.target.value)} />
           <Input id="address" label="Address" icon={MapPin} placeholder="Street, unit, city" />
           <Input id="phone" label="Phone" type="tel" placeholder="+1 (___) ___-____" />
           <Input id="type" label="Service type" placeholder="AC maintenance, cleaning, repair…" hint="Optional — helps you find them later" />
         </div>
-      </Scroll>
+      </Page>
       <FlowFooter>
         <Button
           size="lg"
@@ -111,7 +103,7 @@ export function VisitStartScreen() {
   return (
     <>
       <ScreenHeader title="Start visit" subtitle="Step 2 · Confirm the details" onBack={back} step={2} totalSteps={6} />
-      <Scroll className="px-5 py-4">
+      <Page width="form">
         <Card className="p-4">
           <div className="flex items-center gap-3">
             <Avatar initials={customer.name.slice(0, 2).toUpperCase()} className="size-12 rounded-2xl" />
@@ -135,7 +127,7 @@ export function VisitStartScreen() {
         <p className="mt-3 px-1 text-xs leading-relaxed text-muted-foreground">
           Date, time and GPS are captured automatically and attached to the report as proof.
         </p>
-      </Scroll>
+      </Page>
       <FlowFooter>
         <Button size="lg" fullWidth iconRight={ArrowRight} onClick={() => navigate("gps", frame.params)}>
           Confirm location
@@ -187,7 +179,7 @@ export function GpsScreen() {
   return (
     <>
       <ScreenHeader title="Location" onBack={back} />
-      <Scroll className="flex flex-col px-5 py-4">
+      <Page width="form" className="flex flex-col">
         <div className="relative overflow-hidden rounded-3xl border border-border" style={{ height: 260 }}>
           {/* stylised monochrome map */}
           <div
@@ -239,7 +231,7 @@ export function GpsScreen() {
             {state === "found" ? "37.7897, -122.4001 · ±5m" : "Acquiring satellites…"}
           </p>
         </Card>
-      </Scroll>
+      </Page>
       <FlowFooter>
         <Button
           size="lg"
@@ -292,7 +284,7 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
         step={step}
         totalSteps={6}
       />
-      <Scroll className="px-5 py-4">
+      <Page width="form">
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
             {count} photo{count === 1 ? "" : "s"} captured
@@ -307,7 +299,7 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
           </span>
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2.5">
+        <div className="mt-4 grid grid-cols-3 gap-2.5 sm:grid-cols-4">
           <CaptureButton onCapture={add} />
           {Array.from({ length: count }).map((_, i) => (
             <PhotoThumb key={i} tone={phase} index={i + 1} onRemove={removeAt} />
@@ -324,7 +316,7 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
               : "Capture the completed work from the same angles as your before photos for a clear comparison."}
           </p>
         </Card>
-      </Scroll>
+      </Page>
       <FlowFooter>
         <Button size="lg" fullWidth iconRight={ArrowRight} disabled={count === 0} onClick={() => navigate(next, frame.params)}>
           Continue
@@ -353,7 +345,7 @@ export function VoiceScreen() {
   return (
     <>
       <ScreenHeader title="Describe the work" subtitle="Step 4 · Speak, don't type" onBack={back} step={4} totalSteps={6} />
-      <Scroll className="flex flex-col items-center px-5 py-6">
+      <Page width="form" className="flex flex-col items-center lg:py-10">
         <div className="text-center">
           <h2 className="text-lg font-semibold text-foreground text-balance">
             What did you do on this visit?
@@ -401,7 +393,7 @@ export function VoiceScreen() {
         >
           Type it instead
         </button>
-      </Scroll>
+      </Page>
       <FlowFooter>
         <Button size="lg" fullWidth iconRight={ArrowRight} disabled={seconds < 1} onClick={() => navigate("voiceProcessing", frame.params)}>
           Use recording
@@ -479,7 +471,7 @@ export function ReportDraftScreen() {
         totalSteps={6}
         right={<StatusBadge status="draft" />}
       />
-      <Scroll className="px-5 py-4">
+      <Page width="form">
         <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2.5">
           <Sparkles className="size-4 text-muted-foreground" />
           <p className="text-xs text-muted-foreground">Generated from your voice note — review and edit anything.</p>
@@ -536,7 +528,7 @@ export function ReportDraftScreen() {
             </div>
           </Card>
         </div>
-      </Scroll>
+      </Page>
       <FlowFooter>
         <div className="flex gap-3">
           <Button variant="secondary" size="lg" icon={Pencil} onClick={() => navigate("editReport", frame.params)}>
@@ -603,7 +595,7 @@ export function EditReportScreen() {
           </Button>
         }
       />
-      <Scroll className="px-5 py-4">
+      <Page width="form">
         <label className="block">
           <span className="mb-1.5 flex items-center justify-between text-sm font-medium text-muted-foreground">
             Work completed
@@ -654,7 +646,7 @@ export function EditReportScreen() {
         <div className="mt-5">
           <AmountField label="Amount charged" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
         </div>
-      </Scroll>
+      </Page>
       <FlowFooter>
         <Button size="lg" fullWidth icon={Check} onClick={save}>
           Save changes
@@ -674,7 +666,7 @@ export function SignatureScreen() {
   return (
     <>
       <ScreenHeader title="Customer confirmation" onBack={back} />
-      <Scroll className="px-5 py-4">
+      <Page width="form">
         <Card className="p-4">
           <p className="text-sm text-muted-foreground">
             By signing, <span className="font-medium text-foreground">{customer.name}</span> confirms the work
@@ -695,7 +687,7 @@ export function SignatureScreen() {
             The signature is stored with the timestamp and GPS location as tamper-evident proof.
           </p>
         </Card>
-      </Scroll>
+      </Page>
       <FlowFooter>
         <div className="space-y-2.5">
           <Button
@@ -727,7 +719,7 @@ export function CompletedScreen() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <Scroll className="flex flex-col items-center px-5 pt-14">
+      <Page width="form" className="flex flex-col items-center pt-10 lg:pt-14">
         <SuccessMark />
         <h1 className="mt-6 text-2xl font-semibold tracking-tight text-foreground">Report completed</h1>
         <p className="mt-1.5 text-sm text-muted-foreground">Proof of this visit is saved and secured.</p>
@@ -749,7 +741,7 @@ export function CompletedScreen() {
             <SyncIndicator state="syncing" />
           </div>
         </Card>
-      </Scroll>
+      </Page>
 
       <FlowFooter>
         <div className="space-y-2.5">

@@ -25,7 +25,7 @@ import {
   SyncIndicator,
   OfflineBanner,
 } from "../ui"
-import { Scroll } from "../shell"
+import { Page } from "../shell"
 import { useNav } from "@/lib/jobact/store"
 
 /* ------------------------------ OFFLINE ------------------------------- */
@@ -41,7 +41,7 @@ export function OfflineScreen() {
     <>
       <ScreenHeader title="Offline mode" onBack={back} />
       <OfflineBanner />
-      <Scroll className="px-5 py-4">
+      <Page width="form">
         <Card className="flex flex-col items-center p-6 text-center">
           <span className="grid size-14 place-items-center rounded-2xl border border-border bg-muted text-muted-foreground">
             <WifiOff className="size-6" />
@@ -74,7 +74,7 @@ export function OfflineScreen() {
         <p className="mt-6 rounded-xl border border-border bg-card p-3.5 text-xs leading-relaxed text-muted-foreground">
           The full visit flow — customer, photos, voice, and signature — works without a connection. Nothing is lost.
         </p>
-      </Scroll>
+      </Page>
     </>
   )
 }
@@ -118,7 +118,7 @@ export function SyncScreen() {
   return (
     <>
       <ScreenHeader title="Sync" onBack={back} />
-      <Scroll className="px-5 py-4">
+      <Page width="form">
         <Card className="flex flex-col items-center p-6 text-center">
           {syncing ? (
             <>
@@ -170,7 +170,7 @@ export function SyncScreen() {
             </Card>
           ))}
         </div>
-      </Scroll>
+      </Page>
     </>
   )
 }
@@ -221,12 +221,17 @@ export function StatesScreen() {
 
   return (
     <>
-      <ScreenHeader title="Permissions & states" subtitle="Preview of edge-case screens" onBack={back} />
-      <Scroll className="px-5 py-4">
-        <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
+      <ScreenHeader
+        title="Permissions & states"
+        subtitle="Preview of edge-case screens"
+        onBack={back}
+        width="wide"
+      />
+      <Page width="wide">
+        <p className="mb-4 max-w-prose text-xs leading-relaxed text-muted-foreground">
           These are the states JobAct shows when hardware access is blocked or something goes wrong in the field.
         </p>
-        <div className="space-y-4">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {permissionCards.map((c) => (
             <Card key={c.title} className="overflow-hidden">
               <ErrorState
@@ -239,7 +244,7 @@ export function StatesScreen() {
             </Card>
           ))}
         </div>
-      </Scroll>
+      </Page>
     </>
   )
 }

@@ -1,7 +1,7 @@
 "use client"
 
 import { NavProvider, useNav, type Screen } from "@/lib/jobact/store"
-import { PhoneShell, BottomNav } from "./shell"
+import { AppShell } from "./shell"
 import { SplashScreen, SignInScreen } from "./screens/onboarding"
 import {
   HomeScreen,
@@ -26,19 +26,25 @@ import { OfflineScreen, SyncScreen, StatesScreen } from "./screens/states"
 
 const tabScreens: Screen[] = ["home", "reports", "customers", "profile"]
 
+/* Screens shown before the user is inside the workspace — no app chrome */
+const chromelessScreens: Screen[] = ["splash", "signin"]
+
 function Router() {
   const { frame } = useNav()
   const { screen, params } = frame
   const picking = Boolean(params.picking)
-  const showNav = tabScreens.includes(screen) && !picking
+
+  // The sidebar stays put across the whole workspace, including the visit flow;
+  // the bottom tab bar keeps its narrower mobile rules.
+  const chrome = !chromelessScreens.includes(screen)
+  const bottomNav = tabScreens.includes(screen) && !picking
 
   return (
-    <PhoneShell>
+    <AppShell chrome={chrome} bottomNav={bottomNav} active={screen}>
       <div className="flex min-h-0 flex-1 flex-col">
         <ScreenView screen={screen} />
       </div>
-      {showNav && <BottomNav active={screen} />}
-    </PhoneShell>
+    </AppShell>
   )
 }
 

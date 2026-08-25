@@ -22,6 +22,37 @@ import {
   type ReactNode,
 } from "react"
 import type { ReportStatus, SyncState } from "@/lib/jobact/data"
+import { useNav } from "@/lib/jobact/store"
+
+/* ------------------------------------------------------------------ */
+/*  Brand                                                              */
+/* ------------------------------------------------------------------ */
+
+export function Logo({ size = "md" }: { size?: "md" | "lg" }) {
+  const s = size === "lg" ? "size-16 rounded-3xl" : "size-11 rounded-2xl"
+  return (
+    <div
+      className={cn(
+        "grid shrink-0 place-items-center border border-white/10 bg-gradient-to-br from-elevated to-background shadow-inner",
+        s,
+      )}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        className={size === "lg" ? "size-8" : "size-6"}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M9 11l3 3L22 4" />
+        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+      </svg>
+    </div>
+  )
+}
 
 /* ------------------------------------------------------------------ */
 /*  Buttons                                                            */
@@ -306,18 +337,43 @@ export function OfflineBanner() {
 /*  Progress / steps                                                   */
 /* ------------------------------------------------------------------ */
 
+/* Labels for the six-step visit flow, shown alongside the bars on wide screens */
+const FLOW_STEP_LABELS = ["Customer", "Details", "Before", "Voice", "After", "Review"]
+
 export function StepProgress({ step, total }: { step: number; total: number }) {
+  const labels = total === FLOW_STEP_LABELS.length ? FLOW_STEP_LABELS : null
   return (
-    <div className="flex items-center gap-1.5" aria-label={`Step ${step} of ${total}`}>
-      {Array.from({ length: total }).map((_, i) => (
-        <span
-          key={i}
-          className={cn(
-            "h-1 flex-1 rounded-full transition-colors",
-            i < step ? "bg-primary" : "bg-border",
-          )}
-        />
-      ))}
+    <div aria-label={`Step ${step} of ${total}`}>
+      <div className="flex items-center gap-1.5">
+        {Array.from({ length: total }).map((_, i) => (
+          <span
+            key={i}
+            className={cn(
+              "h-1 flex-1 rounded-full transition-colors",
+              i < step ? "bg-primary" : "bg-border",
+            )}
+          />
+        ))}
+      </div>
+      {labels && (
+        <div className="mt-2 hidden gap-1.5 lg:flex" aria-hidden="true">
+          {labels.map((label, i) => (
+            <span
+              key={label}
+              className={cn(
+                "flex-1 truncate text-[11px] font-medium transition-colors",
+                i === step - 1
+                  ? "text-foreground"
+                  : i < step
+                    ? "text-muted-foreground"
+                    : "text-muted-foreground/50",
+              )}
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -469,14 +525,14 @@ export function Sheet({
 }) {
   if (!open) return null
   return (
-    <div className="absolute inset-0 z-50 flex items-end justify-center">
+    <div className="absolute inset-0 z-50 flex items-end justify-center lg:items-center">
       <button
         aria-label="Close"
         onClick={onClose}
         className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-in fade-in"
       />
-      <div className="relative z-10 w-full rounded-t-3xl border-t border-border bg-popover p-5 pb-8 animate-in slide-in-from-bottom duration-300">
-        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-border" />
+      <div className="relative z-10 w-full rounded-t-3xl border-t border-border bg-popover p-5 pb-8 animate-in slide-in-from-bottom duration-300 lg:max-w-lg lg:rounded-2xl lg:border lg:pb-5 lg:shadow-2xl lg:slide-in-from-bottom-4">
+        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-border lg:hidden" />
         {title && <h3 className="mb-4 text-lg font-semibold text-foreground">{title}</h3>}
         {children}
       </div>
@@ -495,6 +551,7 @@ export function ScreenHeader({
   right,
   step,
   totalSteps,
+  width = "form",
 }: {
   title?: string
   subtitle?: string
@@ -502,28 +559,42 @@ export function ScreenHeader({
   right?: ReactNode
   step?: number
   totalSteps?: number
+  width?: "wide" | "form"
 }) {
+  const { canGoBack } = useNav()
+  // Screens pass `back` unconditionally; only draw the control when it can do something
+  const showBack = Boolean(onBack) && canGoBack
+
   return (
-    <header className="sticky top-0 z-30 border-b border-border bg-background/80 px-4 pb-3 pt-3 backdrop-blur-xl">
-      <div className="flex items-center gap-2">
-        {onBack && (
-          <IconButton icon={ChevronLeft} label="Go back" onClick={onBack} className="-ml-2" />
+    <header className="shrink-0 border-b border-border bg-background/80 backdrop-blur-xl">
+      <div
+        className={cn(
+          "mx-auto w-full px-4 pb-3 pt-3 lg:px-10 lg:pb-5 lg:pt-6",
+          width === "wide" ? "max-w-[1180px]" : "max-w-2xl",
         )}
-        <div className="min-w-0 flex-1">
-          {title && (
-            <h1 className="truncate text-base font-semibold text-foreground">{title}</h1>
+      >
+        <div className="flex items-center gap-2">
+          {showBack && (
+            <IconButton icon={ChevronLeft} label="Go back" onClick={onBack} className="-ml-2" />
           )}
-          {subtitle && (
-            <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
-          )}
+          <div className="min-w-0 flex-1">
+            {title && (
+              <h1 className="truncate text-base font-semibold text-foreground lg:text-2xl lg:tracking-tight">
+                {title}
+              </h1>
+            )}
+            {subtitle && (
+              <p className="truncate text-xs text-muted-foreground lg:mt-0.5 lg:text-sm">{subtitle}</p>
+            )}
+          </div>
+          {right}
         </div>
-        {right}
+        {step && totalSteps && (
+          <div className="mt-3 lg:mt-4">
+            <StepProgress step={step} total={totalSteps} />
+          </div>
+        )}
       </div>
-      {step && totalSteps && (
-        <div className="mt-3">
-          <StepProgress step={step} total={totalSteps} />
-        </div>
-      )}
     </header>
   )
 }
@@ -604,12 +675,12 @@ export function SignatureCanvas({
           onPointerMove={move}
           onPointerUp={end}
           onPointerLeave={end}
-          className="h-48 w-full touch-none"
+          className="h-48 w-full cursor-crosshair touch-none lg:h-56"
         />
         {!hasInk && (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1 text-muted-foreground">
             <PenLineIcon />
-            <span className="text-sm">Sign here with your finger</span>
+            <span className="text-sm">Sign here with your mouse or finger</span>
           </div>
         )}
         <div className="pointer-events-none absolute inset-x-6 bottom-8 border-b border-dashed border-border" />
