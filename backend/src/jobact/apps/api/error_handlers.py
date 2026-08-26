@@ -17,9 +17,25 @@ from fastapi.responses import JSONResponse
 
 from jobact.apps.api.routers.auth import LogoutCacheDeleteFailedError
 from jobact.contracts.errors.v1.envelope import ApiError, ErrorDetail, ErrorEnvelope
+from jobact.shared.application.authorization import AuthorizationError
 
 
 def register_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(AuthorizationError)
+    async def _handle_authorization_error(
+        request: Request, exc: AuthorizationError
+    ) -> JSONResponse:
+        envelope = ErrorEnvelope(
+            type="forbidden",
+            title="Forbidden",
+            status=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+            correlation_id=str(uuid.uuid4()),
+        )
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN, content=envelope.model_dump()
+        )
+
     @app.exception_handler(ApiError)
     async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
         envelope = ErrorEnvelope(
