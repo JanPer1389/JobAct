@@ -60,3 +60,17 @@ def test_report_state_machine_enforces_signing_and_revision_invariants() -> None
 
     with pytest.raises(ReportStateError):
         report.update_revision(work_completed="A completed repair", amount_cents=12500)
+
+
+def test_low_confidence_ai_draft_does_not_preserve_an_amount() -> None:
+    report = make_draft()
+
+    report.apply_ai_draft(
+        work_completed="Replaced the damaged kitchen sink drain and tested for leaks.",
+        materials=[],
+        amount_cents=12_500,
+        currency="RUB",
+        ai_confidence="low",
+    )
+
+    assert report.current_revision.amount_cents is None

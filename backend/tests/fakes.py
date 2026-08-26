@@ -16,6 +16,7 @@ asserting on what a handler published, or controlling "the current time").
 import hashlib
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from jobact.shared.application.ports import (
@@ -141,10 +142,15 @@ class FakeLlmGateway:
         base_url: str = "https://fake-llm.test",
         api_key: str = "fake-api-key",
         model_names: dict[str, str] | None = None,
+        drafting_result: Any | None = None,
+        drafting_error: Exception | None = None,
     ) -> None:
         self._base_url = base_url
         self._api_key = api_key
         self._model_names = dict(model_names) if model_names else {}
+        self._drafting_result = drafting_result
+        self._drafting_error = drafting_error
+        self.draft_inputs: list[str] = []
 
     @property
     def base_url(self) -> str:
@@ -156,6 +162,14 @@ class FakeLlmGateway:
 
     def model_name(self, alias: str) -> str:
         return self._model_names.get(alias, alias)
+
+    async def draft(self, raw_notes: str) -> Any:
+        self.draft_inputs.append(raw_notes)
+        if self._drafting_error is not None:
+            raise self._drafting_error
+        if self._drafting_result is None:
+            raise ValueError("No fake drafting result configured.")
+        return self._drafting_result
 
 
 class FakeClock:

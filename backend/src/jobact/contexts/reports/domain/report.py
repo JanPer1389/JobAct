@@ -123,7 +123,7 @@ class Report(AggregateRoot):
         revision.source = "ai"
         revision.work_completed = work_completed
         revision.materials = list(materials)
-        revision.amount_cents = amount_cents
+        revision.amount_cents = None if ai_confidence == "low" else amount_cents
         revision.currency = currency
         revision.ai_confidence = ai_confidence
 
