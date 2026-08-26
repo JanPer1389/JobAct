@@ -56,7 +56,7 @@ class LiteLlmCostCapture:
     """Accumulates LiteLLM's authoritative per-response cost headers."""
 
     def __init__(self) -> None:
-        self._cost_usd = Decimal("0")
+        self._cost_usd = Decimal(0)
         self._has_cost = False
         self._model_name: str | None = None
 
@@ -119,7 +119,7 @@ async def draft_report(llm_gateway: LlmGateway, raw_notes: str) -> DraftingResul
     ) as http_client:
         agent = build_drafting_agent(llm_gateway, http_client=http_client)
         result = await agent.run(raw_notes)
-    usage = result.usage()
+    usage = result.usage
     return DraftingResult(
         draft=result.output,
         prompt_tokens=usage.input_tokens,
