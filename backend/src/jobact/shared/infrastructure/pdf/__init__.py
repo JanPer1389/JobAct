@@ -1,0 +1,1 @@
+"""Concrete PDF rendering adapters."""

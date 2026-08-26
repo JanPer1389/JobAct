@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react"
 import { ArrowRight, Camera, MapPin, Mic, ShieldCheck } from "lucide-react"
-import { Button, Card, Input, Logo } from "../ui"
-import { useNav } from "@/lib/jobact/store"
+import { Button, Card, Logo } from "../ui"
+import { apiFetch } from "@/lib/jobact/api"
+import { useNav, type Session } from "@/lib/jobact/store"
 
 export { Logo }
 
@@ -15,11 +16,26 @@ const features = [
 ]
 
 export function SplashScreen() {
-  const { replace } = useNav()
+  const { replace, setSession } = useNav()
   useEffect(() => {
-    const t = setTimeout(() => replace("signin"), 1600)
-    return () => clearTimeout(t)
-  }, [replace])
+    let cancelled = false
+
+    apiFetch<Session>("/api/v1/auth/session")
+      .then((session) => {
+        if (cancelled) return
+        setSession(session)
+        replace("home")
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSession(null)
+        replace("signin")
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [replace, setSession])
 
   return (
     <div className="relative flex flex-1 flex-col items-center justify-center bg-background">
@@ -37,7 +53,6 @@ export function SplashScreen() {
 }
 
 export function SignInScreen() {
-  const { reset } = useNav()
   const [step, setStep] = useState<"intro" | "form">("intro")
 
   if (step === "intro") {
@@ -93,42 +108,17 @@ export function SignInScreen() {
             Sign in to JobAct
           </h1>
           <p className="mt-1.5 text-sm text-muted-foreground">Use your work email to continue.</p>
-          <form
-            className="mt-8 space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault()
-              reset("home")
-            }}
+          <Button
+            size="lg"
+            fullWidth
+            className="mt-8"
+            onClick={() => window.location.assign("/api/v1/auth/google/start")}
           >
-            <Input
-              id="email"
-              label="Work email"
-              type="email"
-              placeholder="you@company.com"
-              defaultValue="marco@reyesclimate.com"
-              autoComplete="email"
-            />
-            <Input
-              id="password"
-              label="Password"
-              type="password"
-              placeholder="Your password"
-              defaultValue="password"
-              autoComplete="current-password"
-            />
-            <Button size="lg" fullWidth type="submit" className="mt-2">
-              Sign in
-            </Button>
-          </form>
+            Continue with Google
+          </Button>
         </div>
         <p className="mt-8 text-center text-xs text-muted-foreground">
-          New team?{" "}
-          <button
-            onClick={() => reset("home")}
-            className="font-medium text-foreground underline underline-offset-4"
-          >
-            Create a workspace
-          </button>
+          Your workspace is selected from your Google account.
         </p>
       </div>
     </div>

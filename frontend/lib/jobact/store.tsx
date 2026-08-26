@@ -2,11 +2,13 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useMemo,
   useState,
   type ReactNode,
 } from "react"
+import type { ReportResponse } from "@/lib/jobact/api"
 
 export type Screen =
   | "splash"
@@ -54,6 +56,14 @@ interface NavContext {
   // session-level draft state so the create flow feels connected
   draft: DraftState
   setDraft: (patch: Partial<DraftState>) => void
+  session: Session | null
+  setSession: (session: Session | null) => void
+}
+
+export interface Session {
+  user_id: string
+  organization_id: string
+  role: string
 }
 
 export interface DraftState {
@@ -65,6 +75,12 @@ export interface DraftState {
   workCompleted: string
   amount: string
   signed: boolean
+  visitId?: string
+  reportId?: string
+  revisionId?: string
+  signatureAssetId?: string
+  rawNotes: string
+  report?: ReportResponse
 }
 
 const initialDraft: DraftState = {
@@ -73,6 +89,7 @@ const initialDraft: DraftState = {
   workCompleted: "",
   amount: "",
   signed: false,
+  rawNotes: "",
 }
 
 const Ctx = createContext<NavContext | null>(null)
@@ -80,6 +97,25 @@ const Ctx = createContext<NavContext | null>(null)
 export function NavProvider({ children }: { children: ReactNode }) {
   const [stack, setStack] = useState<Frame[]>([{ screen: "splash", params: {} }])
   const [draft, setDraftState] = useState<DraftState>(initialDraft)
+  const [session, setSession] = useState<Session | null>(null)
+
+  const navigate = useCallback((screen: Screen, params: NavParams = {}) => {
+    setStack((current) => [...current, { screen, params }])
+  }, [])
+  const replace = useCallback((screen: Screen, params: NavParams = {}) => {
+    setStack((current) => [...current.slice(0, -1), { screen, params }])
+  }, [])
+  const back = useCallback(() => {
+    setStack((current) =>
+      current.length > 1 ? current.slice(0, -1) : current,
+    )
+  }, [])
+  const reset = useCallback((screen: Screen, params: NavParams = {}) => {
+    setStack([{ screen, params }])
+  }, [])
+  const setDraft = useCallback((patch: Partial<DraftState>) => {
+    setDraftState((current) => ({ ...current, ...patch }))
+  }, [])
 
   const value = useMemo<NavContext>(() => {
     const frame = stack[stack.length - 1]
@@ -87,16 +123,16 @@ export function NavProvider({ children }: { children: ReactNode }) {
       frame,
       stack,
       canGoBack: stack.length > 1,
-      navigate: (screen, params = {}) =>
-        setStack((s) => [...s, { screen, params }]),
-      replace: (screen, params = {}) =>
-        setStack((s) => [...s.slice(0, -1), { screen, params }]),
-      back: () => setStack((s) => (s.length > 1 ? s.slice(0, -1) : s)),
-      reset: (screen, params = {}) => setStack([{ screen, params }]),
+      navigate,
+      replace,
+      back,
+      reset,
       draft,
-      setDraft: (patch) => setDraftState((d) => ({ ...d, ...patch })),
+      setDraft,
+      session,
+      setSession,
     }
-  }, [stack, draft])
+  }, [back, draft, navigate, replace, reset, session, setDraft, setSession])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

@@ -15,6 +15,7 @@ import {
 import {
   forwardRef,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type ButtonHTMLAttributes,
@@ -603,13 +604,20 @@ export function ScreenHeader({
 /*  Signature canvas                                                   */
 /* ------------------------------------------------------------------ */
 
-export function SignatureCanvas({
-  onChange,
-}: {
-  onChange?: (hasInk: boolean) => void
-}) {
+export interface SignatureCanvasHandle {
+  exportPng: () => Promise<Blob | null>
+}
+
+export const SignatureCanvas = forwardRef<
+  SignatureCanvasHandle,
+  {
+    onChange?: (hasInk: boolean) => void
+  }
+>(function SignatureCanvas({ onChange }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const drawing = useRef(false)
+  const activePointer = useRef<number | null>(null)
+  const inkRef = useRef(false)
   const [hasInk, setHasInk] = useState(false)
 
   useEffect(() => {
@@ -628,6 +636,17 @@ export function SignatureCanvas({
     ctx.strokeStyle = "#fafafa"
   }, [])
 
+  useImperativeHandle(ref, () => ({
+    exportPng: () =>
+      new Promise((resolve) => {
+        if (!inkRef.current || !canvasRef.current) {
+          resolve(null)
+          return
+        }
+        canvasRef.current.toBlob(resolve, "image/png")
+      }),
+  }))
+
   function pos(e: React.PointerEvent) {
     const rect = canvasRef.current!.getBoundingClientRect()
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
@@ -635,33 +654,52 @@ export function SignatureCanvas({
 
   function start(e: React.PointerEvent) {
     e.preventDefault()
+    if (activePointer.current !== null) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    activePointer.current = e.pointerId
     drawing.current = true
     const ctx = canvasRef.current!.getContext("2d")!
     const { x, y } = pos(e)
     ctx.beginPath()
+    ctx.arc(x, y, ctx.lineWidth / 2, 0, Math.PI * 2)
+    ctx.fillStyle = ctx.strokeStyle
+    ctx.fill()
+    ctx.beginPath()
     ctx.moveTo(x, y)
+    markInk()
   }
 
   function move(e: React.PointerEvent) {
-    if (!drawing.current) return
+    if (!drawing.current || activePointer.current !== e.pointerId) return
+    e.preventDefault()
     const ctx = canvasRef.current!.getContext("2d")!
     const { x, y } = pos(e)
     ctx.lineTo(x, y)
     ctx.stroke()
-    if (!hasInk) {
-      setHasInk(true)
-      onChange?.(true)
+    markInk()
+  }
+
+  function end(e: React.PointerEvent) {
+    if (activePointer.current !== e.pointerId) return
+    drawing.current = false
+    activePointer.current = null
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
     }
   }
 
-  function end() {
-    drawing.current = false
+  function markInk() {
+    if (inkRef.current) return
+    inkRef.current = true
+    setHasInk(true)
+    onChange?.(true)
   }
 
   function clear() {
     const canvas = canvasRef.current!
     const ctx = canvas.getContext("2d")!
     ctx.clearRect(0, 0, canvas.width, canvas.height)
+    inkRef.current = false
     setHasInk(false)
     onChange?.(false)
   }
@@ -674,7 +712,8 @@ export function SignatureCanvas({
           onPointerDown={start}
           onPointerMove={move}
           onPointerUp={end}
-          onPointerLeave={end}
+          onPointerCancel={end}
+          onLostPointerCapture={end}
           className="h-48 w-full cursor-crosshair touch-none lg:h-56"
         />
         {!hasInk && (
@@ -692,7 +731,7 @@ export function SignatureCanvas({
       </div>
     </div>
   )
-}
+})
 
 function PenLineIcon() {
   return (

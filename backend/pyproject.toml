@@ -1,17 +1,101 @@
 [project]
 name = "jobact-backend"
 version = "0.1.0"
-description = "JobAct backend API (not yet implemented)"
+description = "JobAct backend API"
 readme = "README.md"
 authors = [
     { name = "JanPer1389", email = "josefvorobyev133@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy[asyncio]",
+    "asyncpg",
+    "alembic",
+    "pydantic",
+    "pydantic-settings",
+    "redis",
+    "aioboto3",
+    "authlib",
+    "httpx",
+    "reportlab",
+    "litellm",
+    "pydantic-ai",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "testcontainers",
+    "ruff",
+    "mypy",
+    "respx",
+    "types-Authlib",
+]
 
 [project.scripts]
-jobact-backend = "jobact_backend:main"
+jobact-backend = "jobact:main"
 
 [build-system]
 requires = ["uv_build>=0.11.19,<0.12.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "jobact"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# A transitive dependency (`caio`, pulled in via `aiofile`) installs its
+# own bundled tests as a top-level `tests` package with no `__init__.py`
+# into .venv/lib/*/site-packages, which collides with our own
+# `backend/tests/` as a namespace package (PEP 420) once anything imports
+# plain `tests.*` (e.g. `tests/fakes.py`, shared test infrastructure
+# imported across test suites -- see Task 0.4). `backend/` is not
+# otherwise on sys.path under pytest, so without this, `tests` resolves
+# ONLY to the stale site-packages copy and our real `tests/fakes.py` is
+# invisible. Putting rootdir on sys.path lets our `tests/` directory
+# participate in the namespace merge too.
+pythonpath = ["."]
+# Process-wide cached infra clients (e.g. the SQLAlchemy async engine in
+# jobact.shared.infrastructure.postgres.engine) hold connections bound to
+# whichever event loop created them. pytest-asyncio's per-function default
+# loop would hand a loop-A connection to a loop-B test and raise
+# "attached to a different loop" / "another operation is in progress".
+# Running the whole session on one event loop matches how the real app
+# runs (one loop for the process lifetime) and keeps cached clients valid
+# across tests.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+
+[tool.ruff.lint.flake8-bugbear]
+# `Depends(...)`/`Query(...)`/etc. in an argument default is FastAPI's
+# actual, documented dependency-injection mechanism, not the
+# mutable-default-argument footgun B008 normally catches -- a well-known
+# false positive. Exempting all of FastAPI's parameter-declaration
+# functions (not just `Depends`) here, in the task that establishes the
+# first FastAPI routes in this codebase, so later route files (e.g.
+# customers/visits/media/reports) don't hit the same false positive.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.Header",
+]
+
+[tool.mypy]
+mypy_path = "src"
+# `explicit_package_bases` (paired with `mypy_path`) tells mypy to derive
+# each file's module name from the nearest of these roots instead of
+# walking up until it hits a directory with no `__init__.py`. Without it,
+# a full `mypy src tests` run sees `tests/fakes.py` both as bare "fakes"
+# (discovered directly under `tests/`) and as "tests.fakes" (resolved via
+# `from tests.fakes import ...` in test_ports.py) and refuses to proceed
+# ("Source file found twice under different module names") -- same
+# `tests`-as-namespace-package situation documented under
+# `[tool.pytest.ini_options]` above.
+explicit_package_bases = true

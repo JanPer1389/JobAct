@@ -44,7 +44,7 @@ This repository contains a polished interactive product prototype built around t
 - offline, syncing, and hardware-access state screens;
 - mobile phone shell with bottom navigation.
 
-The current implementation is a frontend prototype. Camera, GPS, voice transcription, persistence, PDF generation, messaging, authentication, and server synchronization are represented by UI states and local demo data rather than connected production services.
+As of Milestone 1, sign-in, customers, and the full visit flow (evidence entry → AI-drafted report → real signature → signed PDF) run against a real backend — see [`docs/architecture/overview.md`](docs/architecture/overview.md). Camera and GPS are still represented by UI states and counts rather than real device hardware; the home dashboard and reports archive still render local demo data. See [`docs/roadmap.md`](docs/roadmap.md) for what's next.
 
 ## Product Direction
 
@@ -80,11 +80,12 @@ The current implementation is a frontend prototype. Camera, GPS, voice transcrip
 
 ## Repository Layout
 
-This is a monorepo with the frontend prototype and the (not yet implemented) backend kept as separate projects:
+This is a monorepo with the frontend and backend kept as separate projects:
 
 ```text
-frontend/   Next.js prototype — see frontend/README below and CLAUDE.md
-backend/    Python backend, managed with uv — see backend/README.md
+frontend/   Next.js prototype UI — see frontend/CLAUDE.md
+backend/    Python (FastAPI/PydanticAI/LiteLLM) backend, managed with uv — see backend/CLAUDE.md
+docs/       Committed architecture docs and ADRs — see docs/architecture/overview.md
 ```
 
 ## Getting Started
@@ -112,15 +113,20 @@ frontend/public/                    Icons and static assets
 
 ### Backend
 
-Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/).
+Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/), Docker (for Postgres/Redis/MinIO/LiteLLM).
 
 ```bash
 cd backend
-uv sync
-uv run jobact-backend
+cp .env.example .env   # fill in OPENROUTER_API_KEY for real AI drafting
+docker compose up -d
+uv sync --dev
+uv run alembic upgrade head
+uv run uvicorn jobact.apps.api.main:app --reload --port 8000
 ```
 
-The backend is currently an empty scaffold (`pyproject.toml` + `uv.lock`). All server-side behavior described below is still simulated in the frontend.
+See [`backend/CLAUDE.md`](backend/CLAUDE.md) for the full command list, layering rules, and
+test suite, and [`docs/architecture/overview.md`](docs/architecture/overview.md) for the
+design this implements.
 
 ## Design Principles
 
@@ -133,15 +139,21 @@ The backend is currently an empty scaffold (`pyproject.toml` + `uv.lock`). All s
 
 ## Roadmap
 
-- Connect real camera and geolocation permissions;
-- Add offline local storage and background synchronization;
-- Add speech-to-text and report generation;
-- Generate signed PDF reports;
-- Share reports through WhatsApp and other channels;
-- Add role-based access for owners and employees;
-- Add service templates, recurring visits, and materials tracking;
-- Validate signature and report requirements for the target markets.
+AI-drafted reports, real signature capture, and signed PDF generation are implemented as of
+Milestone 1 (see [`docs/architecture/overview.md`](docs/architecture/overview.md)). See
+[`docs/roadmap.md`](docs/roadmap.md) for the detailed, milestone-by-milestone plan; in short:
+
+- Milestone 2 — real camera/geolocation and an offline command queue;
+- Milestone 3 — speech-to-text feeding the existing AI drafting pipeline;
+- Milestone 4 — report delivery (e.g. WhatsApp), analytics, and attribution.
+
+Also still ahead: role-based access beyond owner/technician, service templates, recurring
+visits, and materials tracking; validating signature and report requirements for target
+markets.
 
 ## Project Status
 
-**Prototype / MVP exploration.** The repository is intended to validate the product flow and user experience before production mobile infrastructure and integrations are added.
+**Milestone 1 complete.** One vertical slice — visit → AI-drafted report → real signature →
+signed PDF — runs end-to-end against a real backend, proven by domain, contract, workflow,
+and integration tests. The rest of the product surface (home dashboard, reports archive,
+camera/GPS hardware, offline sync) remains prototype/UI-state as described above.

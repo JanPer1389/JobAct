@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   Plus,
   ArrowRight,
@@ -41,6 +41,7 @@ import {
   type ReportStatus,
 } from "@/lib/jobact/data"
 import { useNav } from "@/lib/jobact/store"
+import { apiFetch, type CustomerResponse } from "@/lib/jobact/api"
 
 /* -------------------------------- HOME -------------------------------- */
 
@@ -322,18 +323,52 @@ export function ReportsScreen() {
 /* ------------------------------ CUSTOMERS ----------------------------- */
 
 export function CustomersScreen({ picking = false }: { picking?: boolean }) {
-  const { navigate, back, canGoBack } = useNav()
+  const { navigate, back, canGoBack, setDraft } = useNav()
   const [query, setQuery] = useState("")
+  const [customers, setCustomers] = useState<CustomerResponse[]>([])
+  const [error, setError] = useState<string | null>(null)
 
-  const results = allCustomers.filter(
+  useEffect(() => {
+    let cancelled = false
+    apiFetch<CustomerResponse[]>("/api/v1/customers")
+      .then((result) => {
+        if (!cancelled) setCustomers(result)
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : "Could not load customers.")
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const results = customers.filter(
     (c) =>
       c.name.toLowerCase().includes(query.toLowerCase()) ||
       c.address.toLowerCase().includes(query.toLowerCase()),
   )
 
-  function handleSelect(id: string) {
-    if (picking) navigate("visitStart", { customerId: id })
-    else navigate("customerDetail", { customerId: id })
+  function handleSelect(customer: CustomerResponse) {
+    setDraft({
+      customerId: customer.id,
+      customerName: customer.name,
+      address: customer.address,
+      visitId: undefined,
+      reportId: undefined,
+      revisionId: undefined,
+      signatureAssetId: undefined,
+      rawNotes: "",
+      report: undefined,
+      beforePhotos: 0,
+      afterPhotos: 0,
+      workCompleted: "",
+      amount: "",
+      signed: false,
+    })
+    if (picking) navigate("visitStart", { customerId: customer.id })
+    else navigate("customerDetail", { customerId: customer.id })
   }
 
   const width = picking ? "form" : "wide"
@@ -351,7 +386,7 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
       ) : (
         <PageHeader
           title="Customers"
-          subtitle={`${allCustomers.length} on file`}
+          subtitle={`${customers.length} on file`}
           right={
             <Button
               icon={Plus}
@@ -385,7 +420,9 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
         </div>
 
         <div className="mt-4">
-          {results.length === 0 ? (
+          {error ? (
+            <EmptyState icon={CircleAlert} title="Could not load customers" description={error} />
+          ) : results.length === 0 ? (
             <EmptyState
               icon={UsersIcon}
               title="No customers yet"
@@ -399,7 +436,19 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
           ) : (
             <div className={picking ? "space-y-2.5" : "grid gap-3 sm:grid-cols-2 xl:grid-cols-3"}>
               {results.map((c) => (
-                <CustomerCard key={c.id} customer={c} onClick={() => handleSelect(c.id)} />
+                <CustomerCard
+                  key={c.id}
+                  customer={{
+                    id: c.id,
+                    name: c.name,
+                    address: c.address,
+                    phone: c.phone,
+                    type: c.service_type,
+                    visits: 0,
+                    lastVisit: null,
+                  }}
+                  onClick={() => handleSelect(c)}
+                />
               ))}
             </div>
           )}
@@ -412,7 +461,12 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
 /* ------------------------------- PROFILE ------------------------------ */
 
 export function ProfileScreen() {
-  const { navigate, reset } = useNav()
+  const { navigate, reset, session } = useNav()
+  const userLabel = session ? `User ${session.user_id.slice(0, 8)}` : "Signed-out user"
+  const organizationLabel = session
+    ? `Organization ${session.organization_id.slice(0, 8)}`
+    : "No organization"
+  const initials = session?.role.slice(0, 2).toUpperCase() ?? "--"
 
   const menu: {
     group: string
@@ -437,16 +491,16 @@ export function ProfileScreen() {
 
   return (
     <>
-      <PageHeader title="Account" subtitle={CURRENT_USER.company} width="form" />
+      <PageHeader title="Account" subtitle={organizationLabel} width="form" />
       <Page width="form">
         <Card className="flex items-center gap-3 p-4 lg:p-5">
-          <Avatar initials={CURRENT_USER.initials} className="size-12 rounded-2xl text-base" />
+          <Avatar initials={initials} className="size-12 rounded-2xl text-base" />
           <div className="min-w-0 flex-1">
-            <p className="text-base font-semibold text-foreground">{CURRENT_USER.name}</p>
-            <p className="text-xs text-muted-foreground">{CURRENT_USER.company}</p>
+            <p className="text-base font-semibold text-foreground">{userLabel}</p>
+            <p className="text-xs text-muted-foreground">{organizationLabel}</p>
           </div>
           <span className="shrink-0 rounded-full border border-border bg-muted px-2.5 py-1 text-xs font-medium capitalize text-foreground">
-            {CURRENT_USER.role}
+            {session?.role ?? "signed out"}
           </span>
         </Card>
 

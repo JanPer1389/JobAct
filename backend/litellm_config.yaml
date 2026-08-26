@@ -1,0 +1,13 @@
+model_list:
+  - model_name: report-drafter
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-4.5
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: report-drafter-fallback
+    litellm_params:
+      model: openrouter/openai/gpt-4.1-mini
+      api_key: os.environ/OPENROUTER_API_KEY
+litellm_settings:
+  drop_params: true
+  num_retries: 2
+  request_timeout: 45
