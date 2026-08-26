@@ -121,3 +121,10 @@ class User(AggregateRoot):
 
     def touch_last_seen(self, now: datetime) -> None:
         self.last_seen_at = now
+
+    def change_email(self, email: str, email_verified: bool) -> None:
+        """Update this user's email (e.g. when a linked identity provider
+        reports a new email on a later sign-in).
+        """
+        self.email = email
+        self.email_verified = email_verified

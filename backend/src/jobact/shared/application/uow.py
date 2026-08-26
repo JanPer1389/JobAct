@@ -11,7 +11,7 @@ imports SQLAlchemy for this purpose.
 """
 
 from types import TracebackType
-from typing import Protocol, Self
+from typing import Any, Protocol, Self
 
 from jobact.shared.domain.aggregate import AggregateRoot
 
@@ -30,6 +30,12 @@ class UnitOfWork(Protocol):
     during the block, so their pending domain events (`pull_events()`)
     can be drained and persisted (e.g. to a transactional outbox) as
     part of the same commit.
+
+    `session` exposes the active session to callers that need to hand it
+    to a repository (from Task 1.3 onward) -- typed `Any` here, not
+    `AsyncSession`, to keep this module's zero-SQLAlchemy-imports rule;
+    the concrete `SqlAlchemyUnitOfWork.session` is the real, precisely
+    typed thing repositories actually receive.
     """
 
     async def __aenter__(self) -> Self: ...
@@ -46,3 +52,6 @@ class UnitOfWork(Protocol):
     async def rollback(self) -> None: ...
 
     def register(self, aggregate: AggregateRoot) -> None: ...
+
+    @property
+    def session(self) -> Any: ...
