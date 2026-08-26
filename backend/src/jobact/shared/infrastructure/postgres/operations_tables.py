@@ -113,3 +113,12 @@ signatures_table = Table(
     Column("user_agent", String, nullable=True),
     schema="operations",
 )
+
+report_number_counters_table = Table(
+    "report_number_counters",
+    metadata,
+    Column("organization_id", UUID(as_uuid=True), primary_key=True),
+    Column("year", Integer, primary_key=True),
+    Column("next_number", Integer, nullable=False),
+    schema="operations",
+)
