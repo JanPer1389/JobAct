@@ -34,6 +34,7 @@ from jobact.shared.infrastructure.postgres.uow import SqlAlchemyUnitOfWork
 from jobact.workflows.report_fulfillment.drafting_dispatcher import (
     generate_draft_for_report,
 )
+from jobact.workflows.report_fulfillment.pdf_dispatcher import generate_pdf_for_report
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -168,6 +169,7 @@ async def sign_report(
     report_id: UUID,
     body: SignReportRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     principal: CurrentPrincipal = Depends(get_current_principal),
 ) -> ReportResponse:
     handler = SignReportHandler(
@@ -181,4 +183,5 @@ async def sign_report(
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
+    background_tasks.add_task(generate_pdf_for_report, report.id)
     return _to_response(report)

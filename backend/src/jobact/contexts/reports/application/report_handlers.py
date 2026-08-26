@@ -176,6 +176,22 @@ class UpdateReportRevisionHandler:
             )
             await repo.save(report)
             self._uow.register(report)
+
+            run_repo = WorkflowRunRepository(self._uow.session)
+            run = await run_repo.get_by_subject(report_id)
+            if run is not None and run.state == WorkflowState.MANUAL_INPUT_REQUIRED:
+                if (
+                    run.organization_id != organization_id
+                    or run.workflow_type != "report_fulfillment"
+                ):
+                    raise AuthorizationError(
+                        f"Workflow for report {report_id} does not belong to "
+                        f"organization {organization_id}."
+                    )
+                expected_version = run.state_version
+                run.resume_manual_review()
+                await run_repo.save(run, expected_version=expected_version)
+                self._uow.register(run)
         return report
 
 
@@ -199,12 +215,25 @@ class ReadyForSignatureHandler:
         self._clock = clock
 
     async def handle(self, *, report_id: UUID, organization_id: UUID) -> Report:
-        return await _load_mutate_save(
-            self._uow,
-            report_id,
-            organization_id,
-            lambda report: report.mark_ready_for_signature(now=self._clock.now()),
-        )
+        async with self._uow:
+            report_repo = ReportRepository(self._uow.session)
+            report = await report_repo.get_by_id(report_id)
+            if report is None or report.organization_id != organization_id:
+                raise AuthorizationError(
+                    f"Report {report_id} does not belong to organization {organization_id}."
+                )
+            run_repo = WorkflowRunRepository(self._uow.session)
+            run = await run_repo.get_by_subject(report_id)
+            _authorize_report_workflow(run, report_id, organization_id)
+
+            report.mark_ready_for_signature(now=self._clock.now())
+            await report_repo.save(report)
+            expected_version = run.state_version
+            run.transition_to(WorkflowState.SIGNATURE_PENDING)
+            await run_repo.save(run, expected_version=expected_version)
+            self._uow.register(report)
+            self._uow.register(run)
+        return report
 
 
 class SignReportHandler:
@@ -253,8 +282,31 @@ class SignReportHandler:
                 now=self._clock.now(),
             )
             await repo.save(report)
+            run_repo = WorkflowRunRepository(self._uow.session)
+            run = await run_repo.get_by_subject(report_id)
+            _authorize_report_workflow(run, report_id, organization_id)
+            expected_version = run.state_version
+            run.transition_to(WorkflowState.FINALIZATION_PENDING)
+            run.transition_to(WorkflowState.PDF_PENDING)
+            await run_repo.save(run, expected_version=expected_version)
             self._uow.register(report)
+            self._uow.register(run)
         return report
+
+
+def _authorize_report_workflow(
+    run: WorkflowRun | None, report_id: UUID, organization_id: UUID
+) -> None:
+    if (
+        run is None
+        or run.organization_id != organization_id
+        or run.workflow_type != "report_fulfillment"
+        or run.subject_id != report_id
+    ):
+        raise AuthorizationError(
+            f"Workflow for report {report_id} does not belong to "
+            f"organization {organization_id}."
+        )
 
 
 async def _load_mutate_save(uow, report_id, organization_id, mutation):

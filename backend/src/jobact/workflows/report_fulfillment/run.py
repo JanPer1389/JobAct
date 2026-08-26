@@ -93,6 +93,18 @@ class WorkflowRun(AggregateRoot):
         self.last_error = None
         self.state_version += 1
 
+    def resume_manual_review(self) -> None:
+        """Resume a drafting failure after a human supplies the report revision."""
+        if self.state != WorkflowState.MANUAL_INPUT_REQUIRED:
+            raise InvalidWorkflowTransitionError(
+                f"Cannot resume manual review from {self.state}."
+            )
+        self.state = WorkflowState.REVIEW_PENDING
+        self.attempt = 0
+        self.next_retry_at = None
+        self.last_error = None
+        self.state_version += 1
+
     def record_step_success(self) -> None:
         """Clears retry/error bookkeeping after a step succeeds, without
         changing state (the caller decides whether success also means a

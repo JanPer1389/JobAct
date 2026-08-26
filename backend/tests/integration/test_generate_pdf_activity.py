@@ -10,6 +10,10 @@ from jobact.contexts.customers.domain.customer import Customer
 from jobact.contexts.customers.infrastructure.customer_repository import CustomerRepository
 from jobact.contexts.media.domain.media_asset import MediaAsset
 from jobact.contexts.media.infrastructure.media_asset_repository import MediaAssetRepository
+from jobact.contexts.reports.application.report_handlers import (
+    ReadyForSignatureHandler,
+    SignReportHandler,
+)
 from jobact.contexts.reports.domain.report import Material, Report
 from jobact.contexts.reports.infrastructure.report_repository import ReportRepository
 from jobact.contexts.visits.domain.visit import Visit
@@ -104,7 +108,6 @@ async def test_generate_pdf_completes_signed_workflow_with_embedded_signature(
         materials=[Material(id=uuid4(), label="Sink trap", qty="1")],
     )
     report.confirm(now=now)
-    report.mark_ready_for_signature(now=now)
 
     signature_asset = MediaAsset(
         id=uuid4(),
@@ -121,21 +124,13 @@ async def test_generate_pdf_completes_signed_workflow_with_embedded_signature(
         captured_at=now,
         uploaded_at=now,
     )
-    report.sign(
-        signer_name="Ada Lovelace",
-        signature_media_asset_id=signature_asset.id,
-        signature_id=uuid4(),
-        ip=None,
-        user_agent=None,
-        now=now,
-    )
     run = WorkflowRun.start(
         id=uuid4(),
         organization_id=org_id,
         workflow_type="report_fulfillment",
         subject_id=report.id,
         correlation_id=uuid4(),
-        initial_state=WorkflowState.PDF_PENDING,
+        initial_state=WorkflowState.REVIEW_PENDING,
     )
 
     storage = FakeObjectStorage()
@@ -158,6 +153,37 @@ async def test_generate_pdf_completes_signed_workflow_with_embedded_signature(
         await report_repo.save(report)
         await MediaAssetRepository(session).add(signature_asset)
         await WorkflowRunRepository(session).add(run)
+
+    ready_report = await ReadyForSignatureHandler(
+        uow=SqlAlchemyUnitOfWork(), clock=FakeClock(now)
+    ).handle(report_id=report.id, organization_id=org_id)
+
+    async with session_factory() as session:
+        run_before_signing = await WorkflowRunRepository(session).get_by_id(run.id)
+
+    assert ready_report.status == "pending_signature"
+    assert run_before_signing is not None
+    assert run_before_signing.state == WorkflowState.SIGNATURE_PENDING
+
+    signed_report = await SignReportHandler(
+        uow=SqlAlchemyUnitOfWork(),
+        clock=FakeClock(now),
+        id_generator=FakeIdGenerator(),
+    ).handle(
+        report_id=report.id,
+        organization_id=org_id,
+        signer_name="Ada Lovelace",
+        signature_media_asset_id=signature_asset.id,
+        ip=None,
+        user_agent=None,
+    )
+
+    async with session_factory() as session:
+        run_before_pdf = await WorkflowRunRepository(session).get_by_id(run.id)
+
+    assert signed_report.status == "signed"
+    assert run_before_pdf is not None
+    assert run_before_pdf.state == WorkflowState.PDF_PENDING
 
     renderer = ReportLabPdfRenderer()
     activity = GeneratePdfActivity(
