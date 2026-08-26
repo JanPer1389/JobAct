@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     postgres_user: str = "jobact"
     postgres_password: str = "jobact"
     postgres_db: str = "jobact"
+    # The local Compose Postgres has no SSL configured at all. asyncpg's
+    # default 'prefer' negotiation (try SSL, fall back to plaintext) hangs
+    # into a connection-reset instead of falling back on Windows'
+    # ProactorEventLoop, so it must be disabled outright for local/dev use.
+    # Flip to true once a target Postgres (e.g. managed production) actually
+    # terminates TLS.
+    postgres_ssl: bool = False
 
     @property
     def database_url(self) -> str:

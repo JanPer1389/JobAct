@@ -22,7 +22,9 @@ from jobact.shared.infrastructure.config import get_settings
 def get_engine() -> AsyncEngine:
     """Return the process-wide cached async engine, built from `Settings`."""
     settings = get_settings()
-    return create_async_engine(settings.database_url)
+    return create_async_engine(
+        settings.database_url, connect_args={"ssl": settings.postgres_ssl}
+    )
 
 
 @lru_cache

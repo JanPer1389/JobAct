@@ -64,10 +64,14 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     """Create an Engine and associate a connection with the context."""
+    # connect_args ssl=False: see Settings.postgres_ssl docstring -- asyncpg's
+    # default SSL negotiation hangs into a connection reset against a
+    # non-SSL Postgres on Windows' ProactorEventLoop.
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={"ssl": get_settings().postgres_ssl},
     )
 
     async with connectable.connect() as connection:
