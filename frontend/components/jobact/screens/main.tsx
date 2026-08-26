@@ -412,7 +412,12 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
 /* ------------------------------- PROFILE ------------------------------ */
 
 export function ProfileScreen() {
-  const { navigate, reset } = useNav()
+  const { navigate, reset, session } = useNav()
+  const userLabel = session ? `User ${session.user_id.slice(0, 8)}` : "Signed-out user"
+  const organizationLabel = session
+    ? `Organization ${session.organization_id.slice(0, 8)}`
+    : "No organization"
+  const initials = session?.role.slice(0, 2).toUpperCase() ?? "--"
 
   const menu: {
     group: string
@@ -437,16 +442,16 @@ export function ProfileScreen() {
 
   return (
     <>
-      <PageHeader title="Account" subtitle={CURRENT_USER.company} width="form" />
+      <PageHeader title="Account" subtitle={organizationLabel} width="form" />
       <Page width="form">
         <Card className="flex items-center gap-3 p-4 lg:p-5">
-          <Avatar initials={CURRENT_USER.initials} className="size-12 rounded-2xl text-base" />
+          <Avatar initials={initials} className="size-12 rounded-2xl text-base" />
           <div className="min-w-0 flex-1">
-            <p className="text-base font-semibold text-foreground">{CURRENT_USER.name}</p>
-            <p className="text-xs text-muted-foreground">{CURRENT_USER.company}</p>
+            <p className="text-base font-semibold text-foreground">{userLabel}</p>
+            <p className="text-xs text-muted-foreground">{organizationLabel}</p>
           </div>
           <span className="shrink-0 rounded-full border border-border bg-muted px-2.5 py-1 text-xs font-medium capitalize text-foreground">
-            {CURRENT_USER.role}
+            {session?.role ?? "signed out"}
           </span>
         </Card>
 

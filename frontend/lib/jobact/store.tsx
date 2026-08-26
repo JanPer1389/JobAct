@@ -54,6 +54,14 @@ interface NavContext {
   // session-level draft state so the create flow feels connected
   draft: DraftState
   setDraft: (patch: Partial<DraftState>) => void
+  session: Session | null
+  setSession: (session: Session | null) => void
+}
+
+export interface Session {
+  user_id: string
+  organization_id: string
+  role: string
 }
 
 export interface DraftState {
@@ -80,6 +88,7 @@ const Ctx = createContext<NavContext | null>(null)
 export function NavProvider({ children }: { children: ReactNode }) {
   const [stack, setStack] = useState<Frame[]>([{ screen: "splash", params: {} }])
   const [draft, setDraftState] = useState<DraftState>(initialDraft)
+  const [session, setSession] = useState<Session | null>(null)
 
   const value = useMemo<NavContext>(() => {
     const frame = stack[stack.length - 1]
@@ -95,8 +104,10 @@ export function NavProvider({ children }: { children: ReactNode }) {
       reset: (screen, params = {}) => setStack([{ screen, params }]),
       draft,
       setDraft: (patch) => setDraftState((d) => ({ ...d, ...patch })),
+      session,
+      setSession,
     }
-  }, [stack, draft])
+  }, [stack, draft, session])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
