@@ -31,6 +31,8 @@ dev = [
     "testcontainers",
     "ruff",
     "mypy",
+    "respx",
+    "types-Authlib",
 ]
 
 [project.scripts]

@@ -110,6 +110,7 @@ async def test_fake_identity_provider_exchange_returns_configured_identity() -> 
         email_verified=True,
         name="User",
         picture=None,
+        nonce="nonce-1",
     )
     provider = FakeIdentityProvider()
     provider.identities["auth-code"] = identity

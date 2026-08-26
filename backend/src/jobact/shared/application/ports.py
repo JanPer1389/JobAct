@@ -87,6 +87,12 @@ class MessageBroker(Protocol):
 class ExternalIdentity:
     """The identity claims returned by an `IdentityProvider` after a
     successful authorization-code exchange.
+
+    `nonce` is the ID token's own (verified) `nonce` claim, surfaced as-is
+    -- comparing it against the value the caller originally issued via
+    `authorization_url` is the CALLER's responsibility (it's the caller
+    who stashed the expected nonce, e.g. in Redis, alongside `state`), not
+    something this port or its implementations know how to check.
     """
 
     subject: str
@@ -94,6 +100,7 @@ class ExternalIdentity:
     email_verified: bool
     name: str
     picture: str | None
+    nonce: str
 
 
 @runtime_checkable
