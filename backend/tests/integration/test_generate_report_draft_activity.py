@@ -80,6 +80,7 @@ async def _draft_with_fake(
                 prompt_tokens=18,
                 completion_tokens=27,
                 cost_usd=0.0123,
+                model="openrouter/anthropic/claude-sonnet-4.5",
             ),
             None,
             "Replaced the damaged kitchen sink drain and tested the repair for leaks.",
@@ -187,7 +188,7 @@ async def test_generate_report_draft_persists_a_revision_and_records_the_run(
     assert loaded_run.state == expected_state
     assert step["status"] == expected_step_status
     if expected_step_status == "succeeded":
-        assert step["output"]["model"] == "report-drafter"
+        assert step["output"]["model"] == "openrouter/anthropic/claude-sonnet-4.5"
         assert step["output"]["prompt_tokens"] == 18
         assert step["output"]["completion_tokens"] == 27
         assert step["output"]["cost_usd"] == 0.0123

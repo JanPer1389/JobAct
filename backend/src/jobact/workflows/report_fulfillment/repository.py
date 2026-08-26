@@ -39,6 +39,7 @@ class WorkflowRunRepository:
                 last_error=run.last_error,
                 state_version=run.state_version,
                 correlation_id=run.correlation_id,
+                input_data=run.input_data,
             )
         )
 
@@ -96,4 +97,5 @@ def _to_domain(row) -> WorkflowRun:
         last_error=row.last_error,
         state_version=row.state_version,
         correlation_id=row.correlation_id,
+        input_data=row.input_data,
     )

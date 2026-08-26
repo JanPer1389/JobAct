@@ -5,7 +5,7 @@ map the aggregate back to a response DTO.
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
 from jobact.apps.api.deps import CurrentPrincipal, get_current_principal
 from jobact.contexts.reports.application.report_handlers import (
@@ -29,6 +29,9 @@ from jobact.contracts.http.v1.reports import (
 from jobact.shared.infrastructure.clock import SystemClock
 from jobact.shared.infrastructure.id_generator import UuidIdGenerator
 from jobact.shared.infrastructure.postgres.uow import SqlAlchemyUnitOfWork
+from jobact.workflows.report_fulfillment.drafting_dispatcher import (
+    generate_draft_for_report,
+)
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -63,6 +66,7 @@ def _to_response(report: Report) -> ReportResponse:
 @router.post("", response_model=ReportResponse, status_code=201)
 async def create_report(
     body: CreateReportRequest,
+    background_tasks: BackgroundTasks,
     principal: CurrentPrincipal = Depends(get_current_principal),
 ) -> ReportResponse:
     handler = CreateReportHandler(
@@ -74,6 +78,7 @@ async def create_report(
         created_by=principal.user_id,
         raw_notes=body.raw_notes,
     )
+    background_tasks.add_task(generate_draft_for_report, report.id)
     return _to_response(report)
 
 

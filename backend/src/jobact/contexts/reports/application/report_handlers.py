@@ -4,10 +4,9 @@
 `raw_notes` (the create-report input) is NOT read from
 `visits.raw_notes` -- per this plan's own ruling, `POST /reports`'s
 request body is the sole authoritative source for AI drafting input.
-This task only persists `raw_notes` implicitly via the eventual AI
-drafting workflow (Task 4.3/4.4); it is not stored on the Report/
-ReportRevision itself in this task's scope -- the workflow that
-consumes it hasn't been built yet.
+`raw_notes` is retained in the report-fulfillment workflow input so a
+background drafting attempt and later manual recovery share the same
+authoritative request input without adding it to the report revision.
 """
 
 from __future__ import annotations
@@ -23,6 +22,9 @@ from jobact.contexts.visits.infrastructure.visit_repository import VisitReposito
 from jobact.shared.application.authorization import AuthorizationError
 from jobact.shared.application.ports import Clock, IdGenerator
 from jobact.shared.application.uow import UnitOfWork
+from jobact.workflows.report_fulfillment.repository import WorkflowRunRepository
+from jobact.workflows.report_fulfillment.run import WorkflowRun
+from jobact.workflows.report_fulfillment.states import WorkflowState
 
 
 class CreateReportHandler:
@@ -59,7 +61,18 @@ class CreateReportHandler:
                 created_by=created_by,
             )
             await repo.add(report)
+            run = WorkflowRun.start(
+                id=self._id_generator.new_id(),
+                organization_id=organization_id,
+                workflow_type="report_fulfillment",
+                subject_id=report.id,
+                correlation_id=self._id_generator.new_id(),
+                initial_state=WorkflowState.DRAFTING_PENDING,
+                input_data={"drafting": {"raw_notes": raw_notes}},
+            )
+            await WorkflowRunRepository(self._uow.session).add(run)
             self._uow.register(report)
+            self._uow.register(run)
         return report
 
 

@@ -15,6 +15,7 @@ memory so the repository knows what it started from.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from jobact.shared.domain.aggregate import AggregateRoot
@@ -39,6 +40,7 @@ class WorkflowRun(AggregateRoot):
         last_error: str | None,
         state_version: int,
         correlation_id: UUID,
+        input_data: dict[str, Any],
     ) -> None:
         super().__init__()
         self.id = id
@@ -51,6 +53,7 @@ class WorkflowRun(AggregateRoot):
         self.last_error = last_error
         self.state_version = state_version
         self.correlation_id = correlation_id
+        self.input_data = input_data
 
     @classmethod
     def start(
@@ -62,6 +65,7 @@ class WorkflowRun(AggregateRoot):
         subject_id: UUID,
         correlation_id: UUID,
         initial_state: WorkflowState = WorkflowState.COLLECTING_EVIDENCE,
+        input_data: dict[str, Any] | None = None,
     ) -> WorkflowRun:
         return cls(
             id=id,
@@ -74,6 +78,7 @@ class WorkflowRun(AggregateRoot):
             last_error=None,
             state_version=0,
             correlation_id=correlation_id,
+            input_data=input_data or {},
         )
 
     def transition_to(self, new_state: WorkflowState) -> None:

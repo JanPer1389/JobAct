@@ -64,7 +64,7 @@ class GenerateReportDraftActivity:
         try:
             drafting_result = await self._draft_report(self._llm_gateway, raw_notes)
             drafted = drafting_result.draft
-            model_used = self._llm_gateway.model_name("report-drafter")
+            model_used = drafting_result.model
             error_detail: str | None = None
         except Exception as exc:  # noqa: BLE001 -- any AI/network/validation
             # failure here means "fall back to the template," not "propagate."

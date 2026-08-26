@@ -21,6 +21,7 @@ workflow_runs_table = Table(
     Column("last_error", String, nullable=True),
     Column("state_version", Integer, nullable=False),
     Column("correlation_id", UUID(as_uuid=True), nullable=False),
+    Column("input_data", JSONB, nullable=False),
     schema="workflow",
 )
 
