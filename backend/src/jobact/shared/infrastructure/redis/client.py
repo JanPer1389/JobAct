@@ -29,9 +29,17 @@ def get_redis_client() -> redis.Redis:
 
     Same `lru_cache` pattern as
     `shared.infrastructure.postgres.engine.get_engine()`.
+
+    `decode_responses=True` -- without it, redis-py returns raw `bytes`
+    for keys/values/stream fields, which silently breaks any string-keyed
+    dict lookup downstream (e.g. `RedisStreamsBroker.consume()`'s
+    `fields["payload"]` would `KeyError` against a `bytes`-keyed dict).
+    `OAuthStateStore`/`SessionCache`'s existing `json.loads(raw)` calls
+    already tolerate either `str` or `bytes`, so this is a safe,
+    backward-compatible change for every existing caller of this client.
     """
     settings = get_settings()
-    return redis.from_url(settings.redis_url)
+    return redis.from_url(settings.redis_url, decode_responses=True)
 
 
 class OAuthStateStore:

@@ -9,7 +9,7 @@ Streams' actual model.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from redis.asyncio import Redis
@@ -46,6 +46,14 @@ class RedisStreamsBroker:
             )
             if not response:
                 continue
+            # `xreadgroup`'s declared return type is a union that also
+            # covers RESP3's dict-shaped stream responses; this client
+            # never enables RESP3, so the actual shape here is always the
+            # classic `[[stream_name, [(id, fields), ...]], ...]` list --
+            # asserting it narrows the type (iterating a dict would yield
+            # just its keys, which is a real bug this assert also guards
+            # against, not just a type-checker satisfaction).
+            assert isinstance(response, list)
             for _stream_name, entries in response:
                 for entry_id, fields in entries:
                     payload = json.loads(fields["payload"])
@@ -57,7 +65,9 @@ class RedisStreamsBroker:
                     )
 
 
-def _make_ack(redis_client: Redis, stream: str, group: str, entry_id: str):
+def _make_ack(
+    redis_client: Redis, stream: str, group: str, entry_id: str
+) -> Callable[[], Awaitable[None]]:
     async def ack() -> None:
         await redis_client.xack(stream, group, entry_id)
 
