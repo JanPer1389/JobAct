@@ -3,9 +3,10 @@
 
 Registered on the app in `main.create_app()`. Scoped to exactly what
 this task's routes raise: `ApiError` (401/403/400 cases from
-`apps/api/deps.py` and `apps/api/routers/auth.py`) and FastAPI's own
-`RequestValidationError` (422) -- not a generic exception taxonomy for
-error cases that don't exist yet.
+`apps/api/deps.py` and `apps/api/routers/auth.py`), FastAPI's own
+`RequestValidationError` (422), and
+`routers.auth.LogoutCacheDeleteFailedError` (502) -- not a generic
+exception taxonomy for error cases that don't exist yet.
 """
 
 import uuid
@@ -14,6 +15,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from jobact.apps.api.routers.auth import LogoutCacheDeleteFailedError
 from jobact.contracts.errors.v1.envelope import ApiError, ErrorDetail, ErrorEnvelope
 
 
@@ -29,6 +31,33 @@ def register_error_handlers(app: FastAPI) -> None:
             errors=exc.errors,
         )
         return JSONResponse(status_code=exc.status, content=envelope.model_dump())
+
+    @app.exception_handler(LogoutCacheDeleteFailedError)
+    async def _handle_logout_cache_delete_failed(
+        request: Request, exc: LogoutCacheDeleteFailedError
+    ) -> JSONResponse:
+        """Postgres was already revoked by the time this fires (see the
+        docstring on `LogoutCacheDeleteFailedError`) -- only the Redis
+        cache cleanup failed. Still clear the client's cookie so their
+        own subsequent requests can't present the stale, still-cached
+        session id; that leaves only a request that independently
+        obtained/replayed the id able to hit the stale cache entry.
+        """
+        envelope = ErrorEnvelope(
+            type="session-cache-unavailable",
+            title="Bad Gateway",
+            status=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "Session was revoked but its cache entry could not be "
+                "deleted. Please try again."
+            ),
+            correlation_id=str(uuid.uuid4()),
+        )
+        response = JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY, content=envelope.model_dump()
+        )
+        response.delete_cookie(key=exc.session_cookie_name, path="/")
+        return response
 
     @app.exception_handler(RequestValidationError)
     async def _handle_validation_error(

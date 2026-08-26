@@ -24,6 +24,7 @@ from sqlalchemy import delete
 
 from jobact.apps.api.main import create_app
 from jobact.apps.api.routers.auth import get_identity_provider
+from jobact.contexts.identity.infrastructure.session_repository import SessionRepository
 from jobact.shared.application.ports import ExternalIdentity
 from jobact.shared.infrastructure.config import get_settings
 from jobact.shared.infrastructure.postgres.engine import get_sessionmaker
@@ -35,7 +36,11 @@ from jobact.shared.infrastructure.postgres.identity_tables import (
     user_profiles_table,
     users_table,
 )
-from jobact.shared.infrastructure.redis.client import OAuthStateStore, get_redis_client
+from jobact.shared.infrastructure.redis.client import (
+    OAuthStateStore,
+    SessionCache,
+    get_redis_client,
+)
 from tests.fakes import FakeIdentityProvider
 
 ALLOWED_ORIGIN = "http://localhost:3000"
@@ -154,6 +159,41 @@ async def test_logout_revokes_session_and_subsequent_session_lookup_401s(
 
     session_response = await client.http.get("/api/v1/auth/session")
     assert session_response.status_code == 401
+
+
+async def test_logout_surfaces_error_and_still_revokes_session_when_cache_delete_fails(
+    client: AuthTestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When Redis's `SessionCache.delete` keeps failing (simulated here by
+    monkeypatching it to always raise -- the cleanest seam given the route
+    instantiates `SessionCache(get_redis_client())` itself rather than via
+    a FastAPI dependency), logout must NOT report success: Postgres is
+    still the source of truth and its revoke must have landed, but the
+    response must surface as an error rather than a silent 204 so a stale,
+    still-cached session entry doesn't go unnoticed.
+    """
+    settings = get_settings()
+    await _complete_google_sign_in(client)
+    session_id = client.http.cookies.get(settings.session_cookie_name)
+    assert session_id is not None
+
+    async def _always_fails(self: SessionCache, session_id: str) -> None:
+        raise ConnectionError("simulated Redis outage")
+
+    monkeypatch.setattr(SessionCache, "delete", _always_fails)
+
+    response = await client.http.post(
+        "/api/v1/auth/logout", headers={"origin": ALLOWED_ORIGIN}
+    )
+
+    assert response.status_code != 204
+    assert response.status_code >= 500
+
+    session_factory = get_sessionmaker()
+    async with session_factory() as pg_session:
+        session = await SessionRepository(pg_session).get_by_id(session_id)
+    assert session is not None
+    assert session.revoked_at is not None
 
 
 async def test_logout_with_foreign_origin_is_rejected(client: AuthTestClient) -> None:

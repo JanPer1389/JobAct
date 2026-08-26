@@ -7,6 +7,7 @@ Redis helpers (`OAuthStateStore`, `SessionCache`) -- no business logic
 lives here.
 """
 
+import asyncio
 import secrets
 
 from fastapi import APIRouter, Depends, Response
@@ -37,6 +38,37 @@ from jobact.shared.infrastructure.redis.client import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+_CACHE_DELETE_ATTEMPTS = 3
+_CACHE_DELETE_RETRY_DELAY_SECONDS = 0.1
+
+
+class LogoutCacheDeleteFailedError(Exception):
+    """Raised by `logout` when deleting the session's Redis cache entry
+    keeps failing after retries.
+
+    Postgres (the source of truth) has already been revoked by the time
+    this is raised -- this only means the Redis fast-path cache used by
+    `deps.get_current_principal` may still hold a stale, still-trusted
+    copy of the session for up to the remainder of its TTL. That has to
+    be surfaced as a real failure (not a silent 204) so it's visible to
+    monitoring/logs instead of quietly leaving a stale cache entry
+    unnoticed.
+
+    Carries `session_cookie_name` so the dedicated handler in
+    `apps/api/error_handlers.py` can still clear the client's cookie on
+    the resulting error response -- once the client's own cookie is
+    gone, the only way the stale cache entry could be presented to
+    `get_current_principal` is by a request that independently obtained
+    or replayed that session id, not by the legitimate client's own
+    subsequent requests.
+    """
+
+    def __init__(self, session_cookie_name: str) -> None:
+        super().__init__(
+            "Failed to delete the session's Redis cache entry after retries."
+        )
+        self.session_cookie_name = session_cookie_name
 
 
 def get_identity_provider(
@@ -155,6 +187,16 @@ async def logout(
 ) -> Response:
     """Revoke the current session (Postgres is the record of truth),
     drop its Redis cache entry, and clear the cookie.
+
+    The Postgres revoke is the security-relevant state and always
+    happens first, unconditionally. Deleting the Redis cache entry is
+    then retried a few times before giving up: if it still fails, this
+    raises `LogoutCacheDeleteFailedError` instead of returning 204, so
+    the failure is loud rather than silently leaving a stale-but-trusted
+    cache entry in place. The cookie is cleared either way -- on the
+    happy path directly below, and on total cache-delete failure by the
+    dedicated exception handler in `apps/api/error_handlers.py` (the
+    route itself no longer controls the response once it raises).
     """
     now = SystemClock().now()
     async with SqlAlchemyUnitOfWork() as uow:
@@ -165,7 +207,21 @@ async def logout(
             await session_repo.save(session)
 
     cache = SessionCache(get_redis_client())
-    await cache.delete(principal.session_id)
+    delay_seconds = _CACHE_DELETE_RETRY_DELAY_SECONDS
+    last_error: Exception | None = None
+    for attempt in range(_CACHE_DELETE_ATTEMPTS):
+        try:
+            await cache.delete(principal.session_id)
+            last_error = None
+            break
+        except Exception as exc:  # noqa: BLE001 -- retried below, re-raised if exhausted
+            last_error = exc
+            if attempt < _CACHE_DELETE_ATTEMPTS - 1:
+                await asyncio.sleep(delay_seconds)
+                delay_seconds *= 2
+
+    if last_error is not None:
+        raise LogoutCacheDeleteFailedError(settings.session_cookie_name) from last_error
 
     response = Response(status_code=204)
     response.delete_cookie(key=settings.session_cookie_name, path="/")
