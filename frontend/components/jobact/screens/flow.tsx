@@ -18,6 +18,7 @@ import {
   Trash2,
   CircleCheck,
   LoaderCircle,
+  TriangleAlert,
 } from "lucide-react"
 import {
   Button,
@@ -240,21 +241,74 @@ function MetaRow({
 
 /* ------------------------------- GPS ---------------------------------- */
 
+type GeoPoint = { lat: number; lon: number; accuracy: number }
+
+function requestBrowserLocation(): Promise<GeoPoint> {
+  return new Promise((resolve, reject) => {
+    if (!("geolocation" in navigator)) {
+      reject(new Error("unsupported"))
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) =>
+        resolve({
+          lat: position.coords.latitude,
+          lon: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        }),
+      reject,
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 },
+    )
+  })
+}
+
+function describeLocationError(err: unknown): string {
+  if (err instanceof Error && err.message === "unsupported") {
+    return "This browser can't share your location. Try a different browser or device."
+  }
+  if (typeof err === "object" && err !== null && "code" in err) {
+    switch ((err as GeolocationPositionError).code) {
+      case 1: // PERMISSION_DENIED
+        return "Location access was denied. Allow location access for this site, then try again."
+      case 2: // POSITION_UNAVAILABLE
+        return "Your location couldn't be determined. Try moving somewhere with a clearer signal."
+      case 3: // TIMEOUT
+        return "Finding your location took too long. Try again."
+    }
+  }
+  return "Couldn't get your location. Try again."
+}
+
 export function GpsScreen() {
   const { back, navigate, frame, draft } = useNav()
-  const [state, setState] = useState<"locating" | "found">("locating")
+  const [state, setState] = useState<"locating" | "found" | "error">("locating")
+  const [point, setPoint] = useState<GeoPoint | null>(null)
+  const [locateError, setLocateError] = useState<string | null>(null)
   const customer = useCustomer()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const locationKey = useRef(crypto.randomUUID())
 
+  function locate() {
+    setState("locating")
+    setLocateError(null)
+    requestBrowserLocation()
+      .then((next) => {
+        setPoint(next)
+        setState("found")
+      })
+      .catch((reason) => {
+        setLocateError(describeLocationError(reason))
+        setState("error")
+      })
+  }
+
   useEffect(() => {
-    const t = setTimeout(() => setState("found"), 1800)
-    return () => clearTimeout(t)
+    locate()
   }, [])
 
   async function confirmLocation() {
-    if (!draft.visitId) return
+    if (!draft.visitId || !point) return
     setSaving(true)
     setError(null)
     try {
@@ -262,9 +316,9 @@ export function GpsScreen() {
         method: "PATCH",
         headers: { "Idempotency-Key": locationKey.current },
         body: JSON.stringify({
-          gps_lat: 37.7897,
-          gps_lon: -122.4001,
-          gps_accuracy_m: 5,
+          gps_lat: point.lat,
+          gps_lon: point.lon,
+          gps_accuracy_m: point.accuracy,
         }),
       })
       navigate("beforePhotos", frame.params)
@@ -301,12 +355,16 @@ export function GpsScreen() {
                 <span className="absolute size-16 animate-ping rounded-full bg-foreground/20" />
                 <span className="size-4 rounded-full bg-foreground" />
               </span>
-            ) : (
+            ) : state === "found" ? (
               <span className="relative flex flex-col items-center">
                 <span className="grid size-11 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg">
                   <MapPin className="size-5" />
                 </span>
                 <span className="mt-1 size-2 rounded-full bg-primary/40" />
+              </span>
+            ) : (
+              <span className="grid size-11 place-items-center rounded-full bg-destructive/15 text-destructive">
+                <TriangleAlert className="size-5" />
               </span>
             )}
           </div>
@@ -319,6 +377,10 @@ export function GpsScreen() {
               <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
                 <CircleCheck className="size-3.5" /> Confirmed
               </span>
+            ) : state === "error" ? (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-destructive">
+                <TriangleAlert className="size-3.5" /> Location needed
+              </span>
             ) : (
               <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                 <LoaderCircle className="size-3.5 animate-spin" /> Locating
@@ -327,21 +389,34 @@ export function GpsScreen() {
           </div>
           <p className="mt-2 text-sm text-muted-foreground">{customer.address}</p>
           <p className="mt-1 font-mono text-xs text-muted-foreground/70">
-            {state === "found" ? "37.7897, -122.4001 · ±5m" : "Acquiring satellites…"}
+            {state === "found" && point
+              ? `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)} · ±${Math.round(point.accuracy)}m`
+              : state === "error"
+                ? "Location unavailable"
+                : "Acquiring satellites…"}
           </p>
         </Card>
+        {state === "error" && locateError && (
+          <p className="mt-3 text-sm text-destructive">{locateError}</p>
+        )}
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
-        <Button
-          size="lg"
-          fullWidth
-          disabled={state !== "found" || saving}
-          iconRight={ArrowRight}
-          onClick={confirmLocation}
-        >
-          {state === "found" ? "Location confirmed" : "Confirming location…"}
-        </Button>
+        {state === "error" ? (
+          <Button size="lg" fullWidth iconRight={ArrowRight} onClick={locate}>
+            Try again
+          </Button>
+        ) : (
+          <Button
+            size="lg"
+            fullWidth
+            disabled={state !== "found" || saving}
+            iconRight={ArrowRight}
+            onClick={confirmLocation}
+          >
+            {state === "found" ? (saving ? "Saving…" : "Location confirmed") : "Locating…"}
+          </Button>
+        )}
       </FlowFooter>
     </>
   )
