@@ -48,3 +48,12 @@ class Session(AggregateRoot):
 
     def is_active(self, now: datetime) -> bool:
         return self.revoked_at is None and now < self.expires_at
+
+    def revoke(self, now: datetime) -> None:
+        """Mark this session revoked as of `now` (e.g. on logout).
+
+        Idempotent: revoking an already-revoked session leaves its
+        original `revoked_at` in place rather than overwriting it.
+        """
+        if self.revoked_at is None:
+            self.revoked_at = now

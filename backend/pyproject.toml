@@ -70,6 +70,23 @@ pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 
+[tool.ruff.lint.flake8-bugbear]
+# `Depends(...)`/`Query(...)`/etc. in an argument default is FastAPI's
+# actual, documented dependency-injection mechanism, not the
+# mutable-default-argument footgun B008 normally catches -- a well-known
+# false positive. Exempting all of FastAPI's parameter-declaration
+# functions (not just `Depends`) here, in the task that establishes the
+# first FastAPI routes in this codebase, so later route files (e.g.
+# customers/visits/media/reports) don't hit the same false positive.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.Header",
+]
+
 [tool.mypy]
 mypy_path = "src"
 # `explicit_package_bases` (paired with `mypy_path`) tells mypy to derive
