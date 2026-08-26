@@ -42,8 +42,15 @@ def _unauthenticated(detail: str) -> ApiError:
     )
 
 
-async def get_current_principal(request: Request) -> CurrentPrincipal:
-    """Resolve the caller's session from the `session_cookie_name` cookie.
+async def try_resolve_principal(request: Request) -> CurrentPrincipal | None:
+    """Resolve the caller's session from the `session_cookie_name` cookie,
+    returning `None` instead of raising when there is no valid session.
+
+    This is the actual resolution logic; `get_current_principal` below is
+    a thin raising wrapper around it for use as a FastAPI route
+    dependency. Non-raising callers (e.g. `apps/api/middleware/idempotency.py`,
+    which needs to resolve the caller's organization without treating "not
+    authenticated" as its own concern) should call this directly instead.
 
     Fast path: Redis's `SessionCache`, keyed by session id -- present only
     while the session is both unexpired and un-revoked (logout explicitly
@@ -55,7 +62,7 @@ async def get_current_principal(request: Request) -> CurrentPrincipal:
     settings = get_settings()
     session_id = request.cookies.get(settings.session_cookie_name)
     if not session_id:
-        raise _unauthenticated("No session cookie present.")
+        return None
 
     cache = SessionCache(get_redis_client())
     cached = await cache.get(session_id)
@@ -70,7 +77,7 @@ async def get_current_principal(request: Request) -> CurrentPrincipal:
     async with SqlAlchemyUnitOfWork() as uow:
         session = await SessionRepository(uow.session).get_by_id(session_id)
         if session is None or not session.is_active(SystemClock().now()):
-            raise _unauthenticated("Session not found, expired, or revoked.")
+            return None
 
         membership = await MembershipRepository(uow.session).get_by_user_id(
             session.user_id
@@ -91,6 +98,17 @@ async def get_current_principal(request: Request) -> CurrentPrincipal:
         role=principal.role,
         ttl_seconds=remaining_ttl,
     )
+    return principal
+
+
+async def get_current_principal(request: Request) -> CurrentPrincipal:
+    """FastAPI dependency: resolve the caller's session, raising 401 if
+    there isn't a valid one. See `try_resolve_principal` for the actual
+    resolution logic.
+    """
+    principal = await try_resolve_principal(request)
+    if principal is None:
+        raise _unauthenticated("No session cookie present, or session not found, expired, or revoked.")
     return principal
 
 
