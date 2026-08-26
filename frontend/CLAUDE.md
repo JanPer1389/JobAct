@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-JobAct is a mobile-first field-service prototype: it turns a completed on-site visit (before/after photos, GPS, timestamp, voice note, work details, customer signature) into a structured service report. This directory is a frontend prototype only — camera, GPS, voice transcription, persistence, PDF generation, and sync are all simulated with local demo data and UI state, not real integrations. The [`../backend`](../backend) project is a placeholder scaffold with no endpoints yet.
+JobAct is a mobile-first field-service prototype: it turns a completed on-site visit (before/after photos, GPS, timestamp, voice note, work details, customer signature) into a structured service report. As of Milestone 1, sign-in, the customer list/creation, and the entire linear visit-creation flow (`screens/flow.tsx`: GPS/photo PATCHes, notes, AI report drafting, edit/confirm, real signature capture and upload, signing, PDF) are wired to the real backend — see [`../backend`](../backend/CLAUDE.md) and [`../docs/architecture/overview.md`](../docs/architecture/overview.md). The home dashboard and reports archive (`screens/main.tsx`'s `HomeScreen`/`ReportsScreen`) still render the static demo `reports`/`CURRENT_USER` data from `lib/jobact/data.ts` — they were out of Milestone 1's scope and have not been wired to `GET /reports` yet. Camera/photo capture and GPS remain simulated by design — counts and a fixed coordinate are sent to the backend, but no real device hardware is read.
 
 ## Commands
 
@@ -17,7 +17,7 @@ pnpm build       # production build
 pnpm start       # run production build
 ```
 
-There is no lint, typecheck, or test script configured. `next.config.mjs` sets `typescript.ignoreBuildErrors: true`, so `pnpm build` does not fail on type errors — run `npx tsc --noEmit` manually if you need type verification.
+There is no lint or test script configured. `next.config.mjs` no longer sets `typescript.ignoreBuildErrors` (dropped in Milestone 1), so `pnpm build` does fail on type errors; run `npx tsc --noEmit` for a faster standalone check. `next.config.mjs` also rewrites `/api/:path*` to `NEXT_PUBLIC_API_ORIGIN` (default `http://localhost:8000`) so the app talks to the backend same-origin in dev.
 
 ## Architecture
 
@@ -36,7 +36,9 @@ The entire app is a single-page client-side prototype rendered from [app/page.ts
 
 **Presentation layer**: `components/jobact/shell.tsx` provides the phone-frame chrome (`PhoneShell`, fake status bar, `BottomNav`, `Scroll`). `components/jobact/ui.tsx` and `cards.tsx` hold shared prototype UI primitives (distinct from shadcn's `components/ui/`, which currently only has `button.tsx`, configured via `components.json` with the `base-nova` style and no Tailwind config prefix — component aliases: `@/components`, `@/lib`, `@/hooks`).
 
-**Demo data (`lib/jobact/data.ts`)**: static `customers`/`Report`/`Material` arrays and types plus `CURRENT_USER`. There is no backend, database, or API layer wired up yet — any "save" or "sync" action should update local state/draft only, matching the prototype's stated scope.
+**Demo data (`lib/jobact/data.ts`)**: static `customers`/`Report`/`Material` arrays and types plus `CURRENT_USER`. Still the source for the home dashboard and reports archive (see Project section above); the customer list and visit flow instead call the real API via `lib/jobact/api.ts`. When wiring a screen to the backend, replace its demo-data usage rather than layering API calls on top of it.
+
+**Backend API (`lib/jobact/api.ts`)**: `apiFetch<T>()` wraps `fetch` with `credentials: "include"`, an auto-generated `Idempotency-Key` header on mutating requests (preserved across retries of the same logical action), and maps the backend's v1 error envelope to a `JobActApiError`. Requests go through the `/api/*` same-origin rewrite in `next.config.mjs`, never directly to the backend origin from the browser.
 
 ## Conventions
 
