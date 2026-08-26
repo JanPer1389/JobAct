@@ -10,11 +10,13 @@ from fastapi import FastAPI
 from jobact.apps.api.error_handlers import register_error_handlers
 from jobact.apps.api.middleware.idempotency import IdempotencyMiddleware
 from jobact.apps.api.routers.auth import router as auth_router
+from jobact.apps.api.routers.customers import router as customers_router
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="JobAct API", version="1")
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(customers_router, prefix="/api/v1")
     app.add_middleware(IdempotencyMiddleware)
     register_error_handlers(app)
     return app
