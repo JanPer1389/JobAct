@@ -4,12 +4,21 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from jobact.contexts.customers.infrastructure.customer_repository import CustomerRepository
+from jobact.contexts.customers.infrastructure.customer_repository import (
+    CustomerRepository,
+)
 from jobact.contexts.media.domain.media_asset import MediaAsset
-from jobact.contexts.media.infrastructure.media_asset_repository import MediaAssetRepository
+from jobact.contexts.media.infrastructure.media_asset_repository import (
+    MediaAssetRepository,
+)
 from jobact.contexts.reports.infrastructure.report_repository import ReportRepository
 from jobact.contexts.visits.infrastructure.visit_repository import VisitRepository
-from jobact.shared.application.ports import Clock, IdGenerator, ObjectStorage, PdfRenderer
+from jobact.shared.application.ports import (
+    Clock,
+    IdGenerator,
+    ObjectStorage,
+    PdfRenderer,
+)
 from jobact.shared.application.uow import UnitOfWork
 from jobact.workflows.report_fulfillment.repository import WorkflowRunRepository
 from jobact.workflows.report_fulfillment.states import WorkflowState

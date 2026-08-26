@@ -89,7 +89,7 @@ class Report(AggregateRoot):
         revision_id: UUID,
         created_at: datetime,
         created_by: UUID | None,
-    ) -> "Report":
+    ) -> Report:
         return cls(
             id=id,
             organization_id=organization_id,

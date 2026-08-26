@@ -19,7 +19,10 @@ from typing import Any
 from uuid import UUID
 
 from jobact.shared.domain.aggregate import AggregateRoot
-from jobact.workflows.report_fulfillment.states import ALLOWED_TRANSITIONS, WorkflowState
+from jobact.workflows.report_fulfillment.states import (
+    ALLOWED_TRANSITIONS,
+    WorkflowState,
+)
 
 
 class InvalidWorkflowTransitionError(Exception):

@@ -14,8 +14,8 @@ from jobact.contexts.media.infrastructure.media_asset_repository import (
 from jobact.contexts.reports.application.report_handlers import (
     ConfirmReportHandler,
     CreateReportHandler,
-    GetReportManualRecoveryHandler,
     GetReportHandler,
+    GetReportManualRecoveryHandler,
     ListReportsHandler,
     ReadyForSignatureHandler,
     SignReportHandler,

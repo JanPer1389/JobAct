@@ -8,7 +8,6 @@ plan's stated credential design: `OPENROUTER_API_KEY` lives in
 
 from __future__ import annotations
 
-from jobact.shared.application.ports import LlmGateway
 from jobact.shared.infrastructure.config import Settings
 
 # The one alias the application knows -- matches litellm_config.yaml's

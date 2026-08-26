@@ -19,7 +19,6 @@ from jobact.contracts.workflow.v1.activity import ActivityError
 from jobact.shared.application.ports import Clock, IdGenerator
 from jobact.shared.application.uow import UnitOfWork
 from jobact.workflows.report_fulfillment.repository import WorkflowRunRepository
-from jobact.workflows.report_fulfillment.run import WorkflowRun
 from jobact.workflows.report_fulfillment.states import WorkflowState
 from jobact.workflows.report_fulfillment.step_repository import WorkflowStepRepository
 

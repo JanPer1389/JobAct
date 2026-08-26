@@ -13,6 +13,7 @@ from jobact.contexts.reports.application.report_handlers import (
 from jobact.contexts.reports.infrastructure.report_repository import ReportRepository
 from jobact.contexts.visits.domain.visit import Visit
 from jobact.contexts.visits.infrastructure.visit_repository import VisitRepository
+from jobact.shared.application.authorization import AuthorizationError
 from jobact.shared.infrastructure.postgres.engine import get_sessionmaker
 from jobact.shared.infrastructure.postgres.operations_tables import (
     report_materials_table,
@@ -26,7 +27,6 @@ from jobact.shared.infrastructure.postgres.workflow_tables import (
     workflow_runs_table,
     workflow_steps_table,
 )
-from jobact.shared.application.authorization import AuthorizationError
 from jobact.workflows.report_fulfillment.repository import WorkflowRunRepository
 from jobact.workflows.report_fulfillment.states import WorkflowState
 from tests.fakes import FakeClock, FakeIdGenerator

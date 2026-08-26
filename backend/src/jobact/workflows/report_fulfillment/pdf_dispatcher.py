@@ -10,7 +10,9 @@ from jobact.shared.infrastructure.object_storage.s3_compatible import (
 )
 from jobact.shared.infrastructure.pdf.reportlab_renderer import ReportLabPdfRenderer
 from jobact.shared.infrastructure.postgres.uow import SqlAlchemyUnitOfWork
-from jobact.workflows.report_fulfillment.activities.generate_pdf import GeneratePdfActivity
+from jobact.workflows.report_fulfillment.activities.generate_pdf import (
+    GeneratePdfActivity,
+)
 from jobact.workflows.report_fulfillment.repository import WorkflowRunRepository
 from jobact.workflows.report_fulfillment.states import WorkflowState
 
