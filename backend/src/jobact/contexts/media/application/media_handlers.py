@@ -115,5 +115,5 @@ class GetMediaDownloadUrlHandler:
                 f"Media asset {asset_id} does not belong to organization {organization_id}."
             )
         return await self._object_storage.presigned_get(
-            asset.storage_key, _DOWNLOAD_TTL_SECONDS
+            asset.storage_key, DOWNLOAD_TTL_SECONDS
         )
