@@ -57,3 +57,59 @@ media_assets_table = Table(
     Column("uploaded_at", DateTime(timezone=True), nullable=True),
     schema="operations",
 )
+
+reports_table = Table(
+    "reports",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("organization_id", UUID(as_uuid=True), nullable=False),
+    Column("visit_id", UUID(as_uuid=True), nullable=False),
+    Column("human_id", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("current_revision_id", UUID(as_uuid=True), nullable=False),
+    Column("signed_at", DateTime(timezone=True), nullable=True),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    schema="operations",
+)
+
+report_revisions_table = Table(
+    "report_revisions",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("report_id", UUID(as_uuid=True), nullable=False),
+    Column("revision_no", Integer, nullable=False),
+    Column("source", String, nullable=False),
+    Column("work_completed", String, nullable=False),
+    Column("amount_cents", Integer, nullable=True),
+    Column("currency", String, nullable=False),
+    Column("ai_confidence", String, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("created_by", UUID(as_uuid=True), nullable=True),
+    Column("confirmed_by_user_at", DateTime(timezone=True), nullable=True),
+    Column("amount_confirmed_at", DateTime(timezone=True), nullable=True),
+    Column("frozen_at", DateTime(timezone=True), nullable=True),
+    schema="operations",
+)
+
+report_materials_table = Table(
+    "report_materials",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("revision_id", UUID(as_uuid=True), nullable=False),
+    Column("label", String, nullable=False),
+    Column("qty", String, nullable=False),
+    schema="operations",
+)
+
+signatures_table = Table(
+    "signatures",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("report_id", UUID(as_uuid=True), nullable=False),
+    Column("signer_name", String, nullable=False),
+    Column("signed_at", DateTime(timezone=True), nullable=False),
+    Column("media_asset_id", UUID(as_uuid=True), nullable=False),
+    Column("ip", String, nullable=True),
+    Column("user_agent", String, nullable=True),
+    schema="operations",
+)
