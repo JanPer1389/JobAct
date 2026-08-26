@@ -8,6 +8,9 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
 from jobact.apps.api.deps import CurrentPrincipal, get_current_principal
+from jobact.contexts.media.infrastructure.media_asset_repository import (
+    MediaAssetRepository,
+)
 from jobact.contexts.reports.application.report_handlers import (
     ConfirmReportHandler,
     CreateReportHandler,
@@ -35,11 +38,18 @@ from jobact.workflows.report_fulfillment.drafting_dispatcher import (
     generate_draft_for_report,
 )
 from jobact.workflows.report_fulfillment.pdf_dispatcher import generate_pdf_for_report
+from jobact.workflows.report_fulfillment.repository import WorkflowRunRepository
+from jobact.workflows.report_fulfillment.states import WorkflowState
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
-def _to_response(report: Report) -> ReportResponse:
+def _to_response(
+    report: Report,
+    *,
+    workflow_state: WorkflowState | None = None,
+    pdf_media_asset_id: UUID | None = None,
+) -> ReportResponse:
     revision = report.current_revision
     return ReportResponse(
         id=report.id,
@@ -63,6 +73,21 @@ def _to_response(report: Report) -> ReportResponse:
         ),
         signed_at=report.signed_at,
         completed_at=report.completed_at,
+        workflow_state=workflow_state,
+        pdf_media_asset_id=pdf_media_asset_id,
+    )
+
+
+async def _to_enriched_response(report: Report) -> ReportResponse:
+    async with SqlAlchemyUnitOfWork() as uow:
+        run = await WorkflowRunRepository(uow.session).get_by_subject(report.id)
+        pdf_asset = await MediaAssetRepository(
+            uow.session
+        ).get_attached_pdf_by_report(report.id)
+    return _to_response(
+        report,
+        workflow_state=run.state if run is not None else None,
+        pdf_media_asset_id=pdf_asset.id if pdf_asset is not None else None,
     )
 
 
@@ -82,7 +107,7 @@ async def create_report(
         raw_notes=body.raw_notes,
     )
     background_tasks.add_task(generate_draft_for_report, report.id)
-    return _to_response(report)
+    return _to_response(report, workflow_state=WorkflowState.DRAFTING_PENDING)
 
 
 @router.get("", response_model=list[ReportResponse])
@@ -103,7 +128,7 @@ async def get_report(
     report = await handler.handle(
         report_id=report_id, organization_id=principal.organization_id
     )
-    return _to_response(report)
+    return await _to_enriched_response(report)
 
 
 @router.get("/{report_id}/manual-recovery", response_model=ManualRecoveryResponse)
@@ -137,7 +162,7 @@ async def update_revision(
             for m in body.materials
         ],
     )
-    return _to_response(report)
+    return _to_response(report, workflow_state=WorkflowState.REVIEW_PENDING)
 
 
 @router.post("/{report_id}/confirm", response_model=ReportResponse)
@@ -149,7 +174,7 @@ async def confirm_report(
     report = await handler.handle(
         report_id=report_id, organization_id=principal.organization_id
     )
-    return _to_response(report)
+    return _to_response(report, workflow_state=WorkflowState.REVIEW_PENDING)
 
 
 @router.post("/{report_id}/ready-for-signature", response_model=ReportResponse)
@@ -161,7 +186,7 @@ async def ready_for_signature(
     report = await handler.handle(
         report_id=report_id, organization_id=principal.organization_id
     )
-    return _to_response(report)
+    return _to_response(report, workflow_state=WorkflowState.SIGNATURE_PENDING)
 
 
 @router.post("/{report_id}/sign", response_model=ReportResponse)
@@ -184,4 +209,4 @@ async def sign_report(
         user_agent=request.headers.get("user-agent"),
     )
     background_tasks.add_task(generate_pdf_for_report, report.id)
-    return _to_response(report)
+    return _to_response(report, workflow_state=WorkflowState.PDF_PENDING)

@@ -50,6 +50,8 @@ class ReportResponse(BaseModel):
     current_revision: ReportRevisionResponse
     signed_at: datetime | None
     completed_at: datetime | None
+    workflow_state: str | None = None
+    pdf_media_asset_id: UUID | None = None
 
 
 class ManualRecoveryResponse(BaseModel):

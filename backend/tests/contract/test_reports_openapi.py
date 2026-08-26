@@ -4,7 +4,8 @@ from jobact.apps.api.main import create_app
 
 
 def test_openapi_exposes_the_report_and_manual_recovery_endpoints() -> None:
-    paths = create_app().openapi()["paths"]
+    schema = create_app().openapi()
+    paths = schema["paths"]
 
     assert {
         "/api/v1/reports",
@@ -22,3 +23,7 @@ def test_openapi_exposes_the_report_and_manual_recovery_endpoints() -> None:
     assert set(paths["/api/v1/reports/{report_id}/confirm"]) == {"post"}
     assert set(paths["/api/v1/reports/{report_id}/ready-for-signature"]) == {"post"}
     assert set(paths["/api/v1/reports/{report_id}/sign"]) == {"post"}
+    report_properties = schema["components"]["schemas"]["ReportResponse"][
+        "properties"
+    ]
+    assert {"workflow_state", "pdf_media_asset_id"} <= set(report_properties)
