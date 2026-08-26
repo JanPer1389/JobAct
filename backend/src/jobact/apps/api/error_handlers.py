@@ -16,11 +16,28 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from jobact.apps.api.routers.auth import LogoutCacheDeleteFailedError
+from jobact.contexts.media.domain.media_asset import MediaVerificationError
 from jobact.contracts.errors.v1.envelope import ApiError, ErrorDetail, ErrorEnvelope
 from jobact.shared.application.authorization import AuthorizationError
 
 
 def register_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(MediaVerificationError)
+    async def _handle_media_verification_error(
+        request: Request, exc: MediaVerificationError
+    ) -> JSONResponse:
+        envelope = ErrorEnvelope(
+            type="media-verification-failed",
+            title="Unprocessable Entity",
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+            correlation_id=str(uuid.uuid4()),
+        )
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=envelope.model_dump(),
+        )
+
     @app.exception_handler(AuthorizationError)
     async def _handle_authorization_error(
         request: Request, exc: AuthorizationError

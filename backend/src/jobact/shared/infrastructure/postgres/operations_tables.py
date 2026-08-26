@@ -38,3 +38,22 @@ visits_table = Table(
     Column("raw_notes", String, nullable=True),
     schema="operations",
 )
+
+media_assets_table = Table(
+    "media_assets",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("organization_id", UUID(as_uuid=True), nullable=False),
+    Column("storage_key", String, nullable=False),
+    Column("content_type", String, nullable=False),
+    Column("byte_size", Integer, nullable=False),
+    Column("sha256", String, nullable=False),
+    Column("kind", String, nullable=False),
+    Column("phase", String, nullable=True),
+    Column("status", String, nullable=False),
+    Column("visit_id", UUID(as_uuid=True), nullable=True),
+    Column("report_id", UUID(as_uuid=True), nullable=True),
+    Column("captured_at", DateTime(timezone=True), nullable=True),
+    Column("uploaded_at", DateTime(timezone=True), nullable=True),
+    schema="operations",
+)
