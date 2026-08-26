@@ -39,8 +39,12 @@ inbox_table = Table(
 idempotency_keys_table = Table(
     "idempotency_keys",
     metadata,
+    # Composite PK: uniqueness is scoped per-organization, not global --
+    # two different orgs may independently send the same client-generated
+    # Idempotency-Key value (migration 0003). Matches the middleware's own
+    # (key, organization_id) lookup scope.
     Column("key", String, primary_key=True),
-    Column("organization_id", UUID(as_uuid=True), nullable=False),
+    Column("organization_id", UUID(as_uuid=True), primary_key=True),
     Column("endpoint", String, nullable=False),
     Column("request_hash", String, nullable=False),
     Column("response_status", Integer, nullable=True),
