@@ -45,7 +45,11 @@ class ObjectStorage(Protocol):
     """
 
     async def presigned_put(
-        self, key: str, content_type: str, ttl_seconds: int
+        self,
+        key: str,
+        content_type: str,
+        ttl_seconds: int,
+        metadata: dict[str, str] | None = None,
     ) -> str: ...
 
     async def presigned_get(self, key: str, ttl_seconds: int) -> str: ...

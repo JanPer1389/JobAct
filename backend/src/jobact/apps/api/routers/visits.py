@@ -43,6 +43,7 @@ async def start_visit(
         uow=SqlAlchemyUnitOfWork(), clock=SystemClock(), id_generator=UuidIdGenerator()
     )
     visit = await handler.handle(
+        visit_id=body.id,
         organization_id=principal.organization_id,
         customer_id=body.customer_id,
         technician_id=principal.user_id,

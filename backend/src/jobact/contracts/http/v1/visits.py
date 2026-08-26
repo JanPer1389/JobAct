@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 
 class StartVisitRequest(BaseModel):
+    id: UUID
     customer_id: UUID
     gps_lat: float | None = None
     gps_lon: float | None = None

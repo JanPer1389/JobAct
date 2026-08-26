@@ -21,6 +21,7 @@ class StartVisitHandler:
     async def handle(
         self,
         *,
+        visit_id: UUID | None = None,
         organization_id: UUID,
         customer_id: UUID,
         technician_id: UUID,
@@ -38,7 +39,7 @@ class StartVisitHandler:
                 )
 
             visit = Visit.start(
-                id=self._id_generator.new_id(),
+                id=visit_id or self._id_generator.new_id(),
                 organization_id=organization_id,
                 customer_id=customer_id,
                 technician_id=technician_id,

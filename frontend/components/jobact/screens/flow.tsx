@@ -40,6 +40,14 @@ import {
   currency,
 } from "@/lib/jobact/data"
 import { useNav } from "@/lib/jobact/store"
+import {
+  apiFetch,
+  type CustomerResponse,
+  type MediaUploadResponse,
+  type ReportResponse,
+  type VisitResponse,
+} from "@/lib/jobact/api"
+import type { SignatureCanvasHandle } from "../ui"
 
 function useCustomer() {
   const { frame, draft } = useNav()
@@ -62,6 +70,51 @@ export function AddCustomerScreen() {
   const { back, replace, frame, setDraft } = useNav()
   const picking = Boolean(frame.params.picking)
   const [name, setName] = useState("")
+  const [address, setAddress] = useState("")
+  const [phone, setPhone] = useState("")
+  const [serviceType, setServiceType] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const saveKey = useRef(crypto.randomUUID())
+
+  async function saveCustomer() {
+    setSaving(true)
+    setError(null)
+    try {
+      const customer = await apiFetch<CustomerResponse>("/api/v1/customers", {
+        method: "POST",
+        headers: { "Idempotency-Key": saveKey.current },
+        body: JSON.stringify({
+          name,
+          address,
+          phone,
+          service_type: serviceType || "Service visit",
+        }),
+      })
+      setDraft({
+        customerId: customer.id,
+        customerName: customer.name,
+        address: customer.address,
+        visitId: undefined,
+        reportId: undefined,
+        revisionId: undefined,
+        signatureAssetId: undefined,
+        rawNotes: "",
+        report: undefined,
+        beforePhotos: 0,
+        afterPhotos: 0,
+        workCompleted: "",
+        amount: "",
+        signed: false,
+      })
+      if (picking) replace("visitStart", { customerId: customer.id })
+      else back()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save customer.")
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <>
@@ -69,22 +122,19 @@ export function AddCustomerScreen() {
       <Page width="form">
         <div className="space-y-4">
           <Input id="name" label="Customer name" placeholder="e.g. Aurora Dental Clinic" value={name} onChange={(e) => setName(e.target.value)} />
-          <Input id="address" label="Address" icon={MapPin} placeholder="Street, unit, city" />
-          <Input id="phone" label="Phone" type="tel" placeholder="+1 (___) ___-____" />
-          <Input id="type" label="Service type" placeholder="AC maintenance, cleaning, repair…" hint="Optional — helps you find them later" />
+          <Input id="address" label="Address" icon={MapPin} placeholder="Street, unit, city" value={address} onChange={(e) => setAddress(e.target.value)} />
+          <Input id="phone" label="Phone" type="tel" placeholder="+1 (___) ___-____" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <Input id="type" label="Service type" placeholder="AC maintenance, cleaning, repair…" hint="Optional — helps you find them later" value={serviceType} onChange={(e) => setServiceType(e.target.value)} />
+          {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
       </Page>
       <FlowFooter>
         <Button
           size="lg"
           fullWidth
-          disabled={!name.trim()}
+          disabled={!name.trim() || !address.trim() || !phone.trim() || saving}
           iconRight={picking ? ArrowRight : undefined}
-          onClick={() => {
-            setDraft({ customerId: "new", customerName: name || "New customer" })
-            if (picking) replace("visitStart", { customerId: "new" })
-            else back()
-          }}
+          onClick={saveCustomer}
         >
           {picking ? "Save & continue" : "Save customer"}
         </Button>
@@ -96,9 +146,32 @@ export function AddCustomerScreen() {
 /* ----------------------------- VISIT START ---------------------------- */
 
 export function VisitStartScreen() {
-  const { back, navigate, frame } = useNav()
+  const { back, navigate, frame, draft, setDraft } = useNav()
   const customer = useCustomer()
   const now = new Date()
+  const visitId = useRef(crypto.randomUUID())
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const startKey = useRef(crypto.randomUUID())
+
+  async function startVisit() {
+    if (!draft.customerId) return
+    setSaving(true)
+    setError(null)
+    try {
+      const visit = await apiFetch<VisitResponse>("/api/v1/visits", {
+        method: "POST",
+        headers: { "Idempotency-Key": startKey.current },
+        body: JSON.stringify({ id: visitId.current, customer_id: draft.customerId }),
+      })
+      setDraft({ visitId: visit.id })
+      navigate("gps", frame.params)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not start visit.")
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <>
@@ -127,10 +200,11 @@ export function VisitStartScreen() {
         <p className="mt-3 px-1 text-xs leading-relaxed text-muted-foreground">
           Date, time and GPS are captured automatically and attached to the report as proof.
         </p>
+        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
-        <Button size="lg" fullWidth iconRight={ArrowRight} onClick={() => navigate("gps", frame.params)}>
-          Confirm location
+        <Button size="lg" fullWidth iconRight={ArrowRight} disabled={saving} onClick={startVisit}>
+          {saving ? "Starting visit…" : "Confirm location"}
         </Button>
       </FlowFooter>
     </>
@@ -167,14 +241,39 @@ function MetaRow({
 /* ------------------------------- GPS ---------------------------------- */
 
 export function GpsScreen() {
-  const { back, navigate, frame } = useNav()
+  const { back, navigate, frame, draft } = useNav()
   const [state, setState] = useState<"locating" | "found">("locating")
   const customer = useCustomer()
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const locationKey = useRef(crypto.randomUUID())
 
   useEffect(() => {
     const t = setTimeout(() => setState("found"), 1800)
     return () => clearTimeout(t)
   }, [])
+
+  async function confirmLocation() {
+    if (!draft.visitId) return
+    setSaving(true)
+    setError(null)
+    try {
+      await apiFetch<VisitResponse>(`/api/v1/visits/${draft.visitId}`, {
+        method: "PATCH",
+        headers: { "Idempotency-Key": locationKey.current },
+        body: JSON.stringify({
+          gps_lat: 37.7897,
+          gps_lon: -122.4001,
+          gps_accuracy_m: 5,
+        }),
+      })
+      navigate("beforePhotos", frame.params)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save location.")
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <>
@@ -231,14 +330,15 @@ export function GpsScreen() {
             {state === "found" ? "37.7897, -122.4001 · ±5m" : "Acquiring satellites…"}
           </p>
         </Card>
+        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
         <Button
           size="lg"
           fullWidth
-          disabled={state !== "found"}
+          disabled={state !== "found" || saving}
           iconRight={ArrowRight}
-          onClick={() => navigate("beforePhotos", frame.params)}
+          onClick={confirmLocation}
         >
           {state === "found" ? "Location confirmed" : "Confirming location…"}
         </Button>
@@ -253,6 +353,9 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
   const { back, navigate, frame, draft, setDraft } = useNav()
   const count = phase === "before" ? draft.beforePhotos : draft.afterPhotos
   const seeded = useRef(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const photosKey = useRef(crypto.randomUUID())
 
   // seed with a sensible default so previews look real
   useEffect(() => {
@@ -273,7 +376,29 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
 
   const step = phase === "before" ? 3 : 5
   const title = phase === "before" ? "Before photos" : "After photos"
-  const next = phase === "before" ? "voice" : "reportDraft"
+  const next = phase === "before" ? "voice" : "signature"
+
+  async function continueFlow() {
+    if (!draft.visitId) return
+    setSaving(true)
+    setError(null)
+    try {
+      await apiFetch<VisitResponse>(`/api/v1/visits/${draft.visitId}`, {
+        method: "PATCH",
+        headers: { "Idempotency-Key": photosKey.current },
+        body: JSON.stringify(
+          phase === "before"
+            ? { before_photo_count: count }
+            : { after_photo_count: count },
+        ),
+      })
+      navigate(next, frame.params)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save photo count.")
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <>
@@ -316,9 +441,10 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
               : "Capture the completed work from the same angles as your before photos for a clear comparison."}
           </p>
         </Card>
+        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
-        <Button size="lg" fullWidth iconRight={ArrowRight} disabled={count === 0} onClick={() => navigate(next, frame.params)}>
+        <Button size="lg" fullWidth iconRight={ArrowRight} disabled={count === 0 || saving} onClick={continueFlow}>
           Continue
         </Button>
       </FlowFooter>
@@ -329,7 +455,7 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
 /* ------------------------------- VOICE -------------------------------- */
 
 export function VoiceScreen() {
-  const { back, navigate, frame } = useNav()
+  const { back, navigate, frame, setDraft } = useNav()
   const [recording, setRecording] = useState(false)
   const [seconds, setSeconds] = useState(0)
 
@@ -395,7 +521,19 @@ export function VoiceScreen() {
         </button>
       </Page>
       <FlowFooter>
-        <Button size="lg" fullWidth iconRight={ArrowRight} disabled={seconds < 1} onClick={() => navigate("voiceProcessing", frame.params)}>
+        <Button
+          size="lg"
+          fullWidth
+          iconRight={ArrowRight}
+          disabled={seconds < 1}
+          onClick={() => {
+            setDraft({
+              rawNotes:
+                "Diagnosed an intermittent compressor fault. Replaced the start capacitor, cleaned the contactor points, and verified stable operation. Used one 45uF capacitor and contact cleaner. Charged 160 dollars.",
+            })
+            navigate("voiceProcessing", frame.params)
+          }}
+        >
           Use recording
         </Button>
       </FlowFooter>
@@ -406,19 +544,77 @@ export function VoiceScreen() {
 /* -------------------------- VOICE PROCESSING -------------------------- */
 
 export function VoiceProcessingScreen() {
-  const { navigate, frame } = useNav()
+  const { navigate, frame, draft, setDraft } = useNav()
   const steps = ["Transcribing your note", "Structuring the report", "Detecting materials & amount"]
   const [active, setActive] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const started = useRef(false)
+  const notesKey = useRef(crypto.randomUUID())
+  const reportKey = useRef(crypto.randomUUID())
 
   useEffect(() => {
-    if (active >= steps.length) {
-      const t = setTimeout(() => navigate("reportDraft", frame.params), 500)
-      return () => clearTimeout(t)
+    if (started.current) return
+    started.current = true
+    let cancelled = false
+
+    async function buildReport() {
+      if (!draft.visitId || !draft.rawNotes) {
+        throw new Error("Visit notes are missing.")
+      }
+      setActive(1)
+      await apiFetch<VisitResponse>(`/api/v1/visits/${draft.visitId}`, {
+        method: "PATCH",
+        headers: { "Idempotency-Key": notesKey.current },
+        body: JSON.stringify({ raw_notes: draft.rawNotes }),
+      })
+      const created = await apiFetch<ReportResponse>("/api/v1/reports", {
+        method: "POST",
+        headers: { "Idempotency-Key": reportKey.current },
+        body: JSON.stringify({ visit_id: draft.visitId, raw_notes: draft.rawNotes }),
+      })
+      if (cancelled) return
+      setDraft({
+        reportId: created.id,
+        revisionId: created.current_revision.id,
+        report: created,
+      })
+      setActive(2)
+
+      for (let attempt = 0; attempt < 60 && !cancelled; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        const report = await apiFetch<ReportResponse>(`/api/v1/reports/${created.id}`)
+        if (cancelled) return
+        setDraft({
+          revisionId: report.current_revision.id,
+          report,
+          workCompleted: report.current_revision.work_completed,
+          amount:
+            report.current_revision.amount_cents === null
+              ? ""
+              : String(report.current_revision.amount_cents / 100),
+        })
+        if (report.workflow_state === "MANUAL_INPUT_REQUIRED") {
+          navigate("editReport", { ...frame.params, manual: true })
+          return
+        }
+        if (report.workflow_state === "REVIEW_PENDING") {
+          setActive(3)
+          navigate("reportDraft", frame.params)
+          return
+        }
+      }
+      throw new Error("Report drafting timed out. Please try again.")
     }
-    const t = setTimeout(() => setActive((a) => a + 1), 900)
-    return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active])
+
+    buildReport().catch((reason: unknown) => {
+      if (!cancelled) {
+        setError(reason instanceof Error ? reason.message : "Could not build report.")
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [draft.rawNotes, draft.visitId, frame.params, navigate, setDraft])
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
@@ -428,6 +624,7 @@ export function VoiceProcessingScreen() {
       </div>
       <h2 className="mt-6 text-lg font-semibold text-foreground">Building your report</h2>
       <p className="mt-1 text-sm text-muted-foreground">This usually takes a few seconds</p>
+      {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
 
       <div className="mt-8 w-full max-w-xs space-y-3 text-left">
         {steps.map((s, i) => (
@@ -455,11 +652,33 @@ export function VoiceProcessingScreen() {
 /* --------------------------- REPORT DRAFT ----------------------------- */
 
 export function ReportDraftScreen() {
-  const { back, navigate, frame, draft } = useNav()
+  const { back, navigate, frame, draft, setDraft } = useNav()
   const customer = useCustomer()
+  const report = draft.report
+  const revision = report?.current_revision
+  const [confirming, setConfirming] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const confirmKey = useRef(crypto.randomUUID())
 
-  const generated =
-    "Diagnosed and repaired the reported fault. Replaced the worn component, cleaned the surrounding assembly, and verified correct operation before leaving the site."
+  async function continueToEvidence() {
+    if (!draft.reportId) return
+    setConfirming(true)
+    setError(null)
+    try {
+      const confirmed = revision?.confirmed_by_user_at
+        ? report
+        : await apiFetch<ReportResponse>(`/api/v1/reports/${draft.reportId}/confirm`, {
+            method: "POST",
+            headers: { "Idempotency-Key": confirmKey.current },
+          })
+      if (confirmed) setDraft({ report: confirmed })
+      navigate("afterPhotos", frame.params)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not confirm report.")
+    } finally {
+      setConfirming(false)
+    }
+  }
 
   return (
     <>
@@ -474,7 +693,11 @@ export function ReportDraftScreen() {
       <Page width="form">
         <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2.5">
           <Sparkles className="size-4 text-muted-foreground" />
-          <p className="text-xs text-muted-foreground">Generated from your voice note — review and edit anything.</p>
+          <p className="text-xs text-muted-foreground">
+            {revision?.source === "ai"
+              ? "AI draft — check the amount and edit anything before signing."
+              : "Review and confirm the report before signing."}
+          </p>
         </div>
 
         <SectionLabel>
@@ -493,18 +716,28 @@ export function ReportDraftScreen() {
         </Card>
 
         <EditableSection title="Work completed" onEdit={() => navigate("editReport", frame.params)}>
-          <p className="text-sm leading-relaxed text-foreground">{draft.workCompleted || generated}</p>
+          <p className="text-sm leading-relaxed text-foreground">
+            {revision?.work_completed || draft.workCompleted}
+          </p>
         </EditableSection>
 
         <EditableSection title="Materials / consumables" onEdit={() => navigate("editReport", frame.params)}>
           <ul className="space-y-1.5 text-sm text-foreground">
-            <li className="flex justify-between"><span>Start capacitor 45µF</span><span className="text-muted-foreground">×1</span></li>
-            <li className="flex justify-between"><span>Contact cleaner</span><span className="text-muted-foreground">×1</span></li>
+            {(revision?.materials ?? []).map((material) => (
+              <li key={`${material.label}-${material.qty}`} className="flex justify-between">
+                <span>{material.label}</span>
+                <span className="text-muted-foreground">×{material.qty}</span>
+              </li>
+            ))}
           </ul>
         </EditableSection>
 
         <EditableSection title="Amount" onEdit={() => navigate("editReport", frame.params)}>
-          <p className="font-mono text-2xl font-semibold text-foreground">{currency(Number(draft.amount) || 160)}</p>
+          <p className="font-mono text-2xl font-semibold text-foreground">
+            {revision?.amount_cents === null
+              ? "Not specified"
+              : `${(revision?.amount_cents ?? 0) / 100} ${revision?.currency ?? "RUB"}`}
+          </p>
         </EditableSection>
 
         <SectionLabel>
@@ -530,12 +763,13 @@ export function ReportDraftScreen() {
         </div>
       </Page>
       <FlowFooter>
+        {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
         <div className="flex gap-3">
           <Button variant="secondary" size="lg" icon={Pencil} onClick={() => navigate("editReport", frame.params)}>
             Edit
           </Button>
-          <Button size="lg" fullWidth iconRight={ArrowRight} onClick={() => navigate("signature", frame.params)}>
-            Get signature
+          <Button size="lg" fullWidth iconRight={ArrowRight} disabled={confirming} onClick={continueToEvidence}>
+            {confirming ? "Confirming…" : "Continue"}
           </Button>
         </div>
       </FlowFooter>
@@ -568,20 +802,74 @@ function EditableSection({
 /* ----------------------------- EDIT REPORT ---------------------------- */
 
 export function EditReportScreen() {
-  const { back, frame, draft, setDraft } = useNav()
+  const { back, replace, frame, draft, setDraft } = useNav()
+  const typingNotes = Boolean(frame.params.manual) && !draft.reportId
   const [work, setWork] = useState(
-    draft.workCompleted ||
+    (Boolean(frame.params.manual)
+      ? draft.rawNotes
+      : draft.report?.current_revision.work_completed || draft.workCompleted) ||
       "Diagnosed intermittent compressor fault. Replaced the start capacitor and cleaned the contactor points. Verified stable operation before leaving.",
   )
-  const [amount, setAmount] = useState(draft.amount || "160")
-  const [materials, setMaterials] = useState([
-    { id: "m1", label: "Start capacitor 45µF", qty: "1" },
-    { id: "m2", label: "Contact cleaner", qty: "1" },
-  ])
+  const [amount, setAmount] = useState(
+    draft.report?.current_revision.amount_cents === null
+      ? ""
+      : draft.amount || String((draft.report?.current_revision.amount_cents ?? 16000) / 100),
+  )
+  const [materials, setMaterials] = useState(
+    draft.report?.current_revision.materials.map((material) => ({
+      id: crypto.randomUUID(),
+      ...material,
+    })) ?? [],
+  )
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const updateKey = useRef(crypto.randomUUID())
+  const confirmKey = useRef(crypto.randomUUID())
 
-  function save() {
-    setDraft({ workCompleted: work, amount })
-    back()
+  async function save() {
+    if (typingNotes) {
+      setDraft({ rawNotes: work })
+      replace("voiceProcessing", frame.params)
+      return
+    }
+    if (!draft.reportId) return
+    setSaving(true)
+    setError(null)
+    try {
+      const updated = await apiFetch<ReportResponse>(
+        `/api/v1/reports/${draft.reportId}/revision`,
+        {
+          method: "PATCH",
+          headers: { "Idempotency-Key": updateKey.current },
+          body: JSON.stringify({
+            work_completed: work,
+            amount_cents: amount ? Math.round(Number(amount) * 100) : null,
+            currency: draft.report?.current_revision.currency ?? "RUB",
+            materials: materials
+              .filter((material) => material.label.trim())
+              .map(({ label, qty }) => ({ label, qty })),
+          }),
+        },
+      )
+      const confirmed = await apiFetch<ReportResponse>(
+        `/api/v1/reports/${draft.reportId}/confirm`,
+        {
+          method: "POST",
+          headers: { "Idempotency-Key": confirmKey.current },
+        },
+      )
+      setDraft({
+        workCompleted: work,
+        amount,
+        revisionId: confirmed.current_revision.id,
+        report: { ...updated, ...confirmed },
+      })
+      replace("reportDraft", frame.params)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save report.")
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -623,12 +911,26 @@ export function EditReportScreen() {
             {materials.map((m) => (
               <div key={m.id} className="flex items-center gap-2">
                 <input
-                  defaultValue={m.label}
+                  value={m.label}
+                  onChange={(event) =>
+                    setMaterials((list) =>
+                      list.map((item) =>
+                        item.id === m.id ? { ...item, label: event.target.value } : item,
+                      ),
+                    )
+                  }
                   placeholder="Material"
                   className="h-11 flex-1 rounded-xl border border-input bg-card px-3 text-sm text-foreground focus:border-ring focus:outline-none"
                 />
                 <input
-                  defaultValue={m.qty}
+                  value={m.qty}
+                  onChange={(event) =>
+                    setMaterials((list) =>
+                      list.map((item) =>
+                        item.id === m.id ? { ...item, qty: event.target.value } : item,
+                      ),
+                    )
+                  }
                   className="h-11 w-14 rounded-xl border border-input bg-card px-3 text-center text-sm text-foreground focus:border-ring focus:outline-none"
                 />
                 <button
@@ -646,10 +948,11 @@ export function EditReportScreen() {
         <div className="mt-5">
           <AmountField label="Amount charged" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
         </div>
+        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
-        <Button size="lg" fullWidth icon={Check} onClick={save}>
-          Save changes
+        <Button size="lg" fullWidth icon={Check} disabled={saving} onClick={save}>
+          {typingNotes ? "Use these notes" : saving ? "Saving…" : "Save changes"}
         </Button>
       </FlowFooter>
     </>
@@ -659,9 +962,114 @@ export function EditReportScreen() {
 /* ------------------------------ SIGNATURE ----------------------------- */
 
 export function SignatureScreen() {
-  const { back, navigate, frame, setDraft } = useNav()
+  const { back, navigate, frame, draft, setDraft } = useNav()
   const [hasInk, setHasInk] = useState(false)
+  const [signerName, setSignerName] = useState("On-site manager")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const signatureRef = useRef<SignatureCanvasHandle>(null)
+  const readyKey = useRef(crypto.randomUUID())
+  const uploadKey = useRef(crypto.randomUUID())
+  const attachKey = useRef(crypto.randomUUID())
+  const signKey = useRef(crypto.randomUUID())
   const customer = useCustomer()
+
+  async function waitForCompletion() {
+    if (!draft.reportId) return false
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      const completed = await apiFetch<ReportResponse>(
+        `/api/v1/reports/${draft.reportId}`,
+      )
+      setDraft({ report: completed })
+      if (completed.workflow_state === "COMPLETED") {
+        navigate("completed", frame.params)
+        return true
+      }
+    }
+    return false
+  }
+
+  async function finishReport() {
+    if (!draft.reportId) return
+    setSaving(true)
+    setError(null)
+    try {
+      let report = draft.report
+      if (report?.workflow_state === "COMPLETED") {
+        navigate("completed", frame.params)
+        return
+      }
+      if (report?.workflow_state === "PDF_PENDING") {
+        if (!(await waitForCompletion())) {
+          throw new Error("PDF generation timed out. The report remains saved.")
+        }
+        return
+      }
+      if (report?.workflow_state !== "SIGNATURE_PENDING") {
+        report = await apiFetch<ReportResponse>(
+          `/api/v1/reports/${draft.reportId}/ready-for-signature`,
+          {
+            method: "POST",
+            headers: { "Idempotency-Key": readyKey.current },
+          },
+        )
+        setDraft({ report })
+      }
+
+      const png = await signatureRef.current?.exportPng()
+      if (!png) throw new Error("Draw a signature before continuing.")
+      const digest = await crypto.subtle.digest("SHA-256", await png.arrayBuffer())
+      const sha256 = Array.from(new Uint8Array(digest), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("")
+      const upload = await apiFetch<MediaUploadResponse>("/api/v1/media/uploads", {
+        method: "POST",
+        headers: { "Idempotency-Key": uploadKey.current },
+        body: JSON.stringify({
+          content_type: "image/png",
+          byte_size: png.size,
+          sha256,
+          kind: "signature",
+          report_id: draft.reportId,
+        }),
+      })
+      const uploadResponse = await fetch(upload.upload_url, {
+        method: "PUT",
+        headers: { "Content-Type": "image/png", "x-amz-meta-sha256": sha256 },
+        body: png,
+      })
+      if (!uploadResponse.ok) throw new Error("Signature upload failed.")
+      await apiFetch(`/api/v1/media/${upload.media_asset_id}/attach`, {
+        method: "POST",
+        headers: { "Idempotency-Key": attachKey.current },
+      })
+      const signed = await apiFetch<ReportResponse>(
+        `/api/v1/reports/${draft.reportId}/sign`,
+        {
+          method: "POST",
+          headers: { "Idempotency-Key": signKey.current },
+          body: JSON.stringify({
+            signer_name: signerName,
+            signature_media_asset_id: upload.media_asset_id,
+          }),
+        },
+      )
+      setDraft({
+        signed: true,
+        signatureAssetId: upload.media_asset_id,
+        report: signed,
+      })
+
+      if (!(await waitForCompletion())) {
+        throw new Error("PDF generation timed out. The report remains saved.")
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not sign report.")
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <>
@@ -676,10 +1084,10 @@ export function SignatureScreen() {
 
         <div className="mt-5">
           <SectionLabel>Signature</SectionLabel>
-          <SignatureCanvas onChange={setHasInk} />
+          <SignatureCanvas ref={signatureRef} onChange={setHasInk} />
         </div>
 
-        <Input id="signer" label="Signed by" placeholder="Name of person signing" defaultValue="On-site manager" className="mt-2" />
+        <Input id="signer" label="Signed by" placeholder="Name of person signing" value={signerName} onChange={(event) => setSignerName(event.target.value)} className="mt-2" />
 
         <Card className="mt-4 flex items-center gap-3 p-3.5">
           <ShieldCheck className="size-5 shrink-0 text-muted-foreground" />
@@ -687,6 +1095,7 @@ export function SignatureScreen() {
             The signature is stored with the timestamp and GPS location as tamper-evident proof.
           </p>
         </Card>
+        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
         <div className="space-y-2.5">
@@ -694,13 +1103,10 @@ export function SignatureScreen() {
             size="lg"
             fullWidth
             icon={Check}
-            disabled={!hasInk}
-            onClick={() => {
-              setDraft({ signed: true })
-              navigate("completed", frame.params)
-            }}
+            disabled={!hasInk || !signerName.trim() || saving}
+            onClick={finishReport}
           >
-            Confirm & finish
+            {saving ? "Finalizing…" : "Confirm & finish"}
           </Button>
           <Button variant="ghost" size="md" fullWidth icon={Share2} onClick={() => navigate("completed", frame.params)}>
             Send link to sign instead
@@ -716,6 +1122,26 @@ export function SignatureScreen() {
 export function CompletedScreen() {
   const { reset, navigate, draft } = useNav()
   const customer = useCustomer()
+  const [error, setError] = useState<string | null>(null)
+  const revision = draft.report?.current_revision
+  const completedAmount =
+    revision?.amount_cents === null || revision?.amount_cents === undefined
+      ? "Not specified"
+      : `${(revision.amount_cents / 100).toFixed(2)} ${revision.currency}`
+
+  async function openPdf() {
+    const assetId = draft.report?.pdf_media_asset_id
+    if (!assetId) {
+      setError("The PDF is not available yet.")
+      return
+    }
+    try {
+      const result = await apiFetch<{ url: string }>(`/api/v1/media/${assetId}/url`)
+      window.location.assign(result.url)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not open PDF.")
+    }
+  }
 
   return (
     <div className="flex flex-1 flex-col">
@@ -734,22 +1160,25 @@ export function CompletedScreen() {
             <SummaryRow label="Location" value="Captured · ±5m" />
             <SummaryRow label="Photos" value={`${draft.beforePhotos + draft.afterPhotos} (before & after)`} />
             <SummaryRow label="Signature" value={draft.signed ? "Signed on-site" : "Link sent"} />
-            <SummaryRow label="Amount" value={currency(Number(draft.amount) || 160)} strong />
+            <SummaryRow label="Amount" value={completedAmount} strong />
           </div>
           <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
-            <span className="font-mono text-xs text-muted-foreground">JA-2026-0483</span>
-            <SyncIndicator state="syncing" />
+            <span className="font-mono text-xs text-muted-foreground">
+              {draft.report?.human_id ?? "Report"}
+            </span>
+            <SyncIndicator state="synced" />
           </div>
         </Card>
+        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
 
       <FlowFooter>
         <div className="space-y-2.5">
-          <Button size="lg" fullWidth icon={Share2}>
-            Send to customer
+          <Button size="lg" fullWidth icon={Share2} onClick={openPdf}>
+            Open signed PDF
           </Button>
           <div className="flex gap-3">
-            <Button variant="secondary" size="lg" fullWidth onClick={() => navigate("reportDetail", { reportId: "JA-2026-0481" })}>
+            <Button variant="secondary" size="lg" fullWidth onClick={() => navigate("reportDetail", { reportId: draft.reportId })}>
               View report
             </Button>
             <Button variant="ghost" size="lg" icon={House} onClick={() => reset("home")}>

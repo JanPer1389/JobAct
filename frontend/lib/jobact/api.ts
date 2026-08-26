@@ -22,6 +22,63 @@ export class JobActApiError extends Error {
   }
 }
 
+export interface CustomerResponse {
+  id: string
+  name: string
+  address: string
+  phone: string
+  service_type: string
+  created_at: string
+}
+
+export interface VisitResponse {
+  id: string
+  customer_id: string
+  technician_id: string
+  status: string
+  started_at: string
+  gps_lat: number | null
+  gps_lon: number | null
+  gps_accuracy_m: number | null
+  before_photo_count: number
+  after_photo_count: number
+}
+
+export interface ReportMaterial {
+  label: string
+  qty: string
+}
+
+export interface ReportResponse {
+  id: string
+  human_id: string
+  status: string
+  visit_id: string
+  current_revision: {
+    id: string
+    revision_no: number
+    source: string
+    work_completed: string
+    amount_cents: number | null
+    currency: string
+    ai_confidence: string | null
+    confirmed_by_user_at: string | null
+    amount_confirmed_at: string | null
+    frozen_at: string | null
+    materials: ReportMaterial[]
+  }
+  signed_at: string | null
+  completed_at: string | null
+  workflow_state: string | null
+  pdf_media_asset_id: string | null
+}
+
+export interface MediaUploadResponse {
+  media_asset_id: string
+  upload_url: string
+  expires_at: string
+}
+
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"])
 
 export async function apiFetch<T>(

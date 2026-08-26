@@ -61,7 +61,10 @@ class RequestMediaUploadHandler:
             self._uow.register(asset)
 
         upload_url = await self._object_storage.presigned_put(
-            storage_key, content_type, _UPLOAD_TTL_SECONDS
+            storage_key,
+            content_type,
+            UPLOAD_TTL_SECONDS,
+            metadata={"sha256": sha256},
         )
         return asset, upload_url
 

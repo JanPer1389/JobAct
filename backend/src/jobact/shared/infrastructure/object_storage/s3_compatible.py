@@ -27,7 +27,13 @@ class S3CompatibleObjectStorage:
             config=Config(signature_version="s3v4"),
         )
 
-    async def presigned_put(self, key: str, content_type: str, ttl_seconds: int) -> str:
+    async def presigned_put(
+        self,
+        key: str,
+        content_type: str,
+        ttl_seconds: int,
+        metadata: dict[str, str] | None = None,
+    ) -> str:
         async with self._client_ctx() as client:
             return await client.generate_presigned_url(
                 "put_object",
@@ -35,6 +41,7 @@ class S3CompatibleObjectStorage:
                     "Bucket": self._settings.minio_bucket_name,
                     "Key": key,
                     "ContentType": content_type,
+                    "Metadata": metadata or {},
                 },
                 ExpiresIn=ttl_seconds,
             )

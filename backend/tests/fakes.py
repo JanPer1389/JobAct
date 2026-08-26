@@ -41,7 +41,13 @@ class FakeObjectStorage:
         self._objects: dict[str, ObjectMetadata] = {}
         self._data: dict[str, bytes] = {}
 
-    async def presigned_put(self, key: str, content_type: str, ttl_seconds: int) -> str:
+    async def presigned_put(
+        self,
+        key: str,
+        content_type: str,
+        ttl_seconds: int,
+        metadata: dict[str, str] | None = None,
+    ) -> str:
         return f"https://fake-storage.test/{key}?method=PUT&content_type={content_type}&ttl={ttl_seconds}"
 
     async def presigned_get(self, key: str, ttl_seconds: int) -> str:
