@@ -39,6 +39,7 @@ class FakeObjectStorage:
 
     def __init__(self) -> None:
         self._objects: dict[str, ObjectMetadata] = {}
+        self._data: dict[str, bytes] = {}
 
     async def presigned_put(self, key: str, content_type: str, ttl_seconds: int) -> str:
         return f"https://fake-storage.test/{key}?method=PUT&content_type={content_type}&ttl={ttl_seconds}"
@@ -49,8 +50,16 @@ class FakeObjectStorage:
     async def head(self, key: str) -> ObjectMetadata | None:
         return self._objects.get(key)
 
+    async def download(self, key: str) -> bytes:
+        return self._data[key]
+
+    async def upload(self, key: str, data: bytes, content_type: str) -> ObjectMetadata:
+        self.put(key, data, content_type)
+        return self._objects[key]
+
     def put(self, key: str, data: bytes, content_type: str) -> None:
         """Test helper: simulate a client completing an upload for `key`."""
+        self._data[key] = data
         self._objects[key] = ObjectMetadata(
             content_type=content_type,
             byte_size=len(data),

@@ -48,3 +48,20 @@ class CustomerRepository:
             )
             for row in result
         ]
+
+    async def get_by_id(self, customer_id: UUID) -> Customer | None:
+        result = await self._session.execute(
+            select(customers_table).where(customers_table.c.id == customer_id)
+        )
+        row = result.first()
+        if row is None:
+            return None
+        return Customer(
+            id=row.id,
+            organization_id=row.organization_id,
+            name=row.name,
+            address=row.address,
+            phone=row.phone,
+            service_type=row.service_type,
+            created_at=row.created_at,
+        )

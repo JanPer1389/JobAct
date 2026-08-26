@@ -61,6 +61,30 @@ class S3CompatibleObjectStorage:
                 sha256=response.get("Metadata", {}).get("sha256", ""),
             )
 
+    async def download(self, key: str) -> bytes:
+        async with self._client_ctx() as client:
+            response = await client.get_object(
+                Bucket=self._settings.minio_bucket_name, Key=key
+            )
+            async with response["Body"] as body:
+                return await body.read()
+
+    async def upload(self, key: str, data: bytes, content_type: str) -> ObjectMetadata:
+        sha256 = compute_sha256(data)
+        async with self._client_ctx() as client:
+            await client.put_object(
+                Bucket=self._settings.minio_bucket_name,
+                Key=key,
+                Body=data,
+                ContentType=content_type,
+                Metadata={"sha256": sha256},
+            )
+        return ObjectMetadata(
+            content_type=content_type,
+            byte_size=len(data),
+            sha256=sha256,
+        )
+
 
 def compute_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
