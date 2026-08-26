@@ -50,3 +50,9 @@ class ReportResponse(BaseModel):
     current_revision: ReportRevisionResponse
     signed_at: datetime | None
     completed_at: datetime | None
+
+
+class ManualRecoveryResponse(BaseModel):
+    """The durable drafting input a technician needs after AI fallback."""
+
+    raw_notes: str

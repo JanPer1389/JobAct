@@ -11,6 +11,7 @@ from jobact.apps.api.deps import CurrentPrincipal, get_current_principal
 from jobact.contexts.reports.application.report_handlers import (
     ConfirmReportHandler,
     CreateReportHandler,
+    GetReportManualRecoveryHandler,
     GetReportHandler,
     ListReportsHandler,
     ReadyForSignatureHandler,
@@ -20,6 +21,7 @@ from jobact.contexts.reports.application.report_handlers import (
 from jobact.contexts.reports.domain.report import Material, Report
 from jobact.contracts.http.v1.reports import (
     CreateReportRequest,
+    ManualRecoveryResponse,
     MaterialDto,
     ReportResponse,
     ReportRevisionResponse,
@@ -101,6 +103,18 @@ async def get_report(
         report_id=report_id, organization_id=principal.organization_id
     )
     return _to_response(report)
+
+
+@router.get("/{report_id}/manual-recovery", response_model=ManualRecoveryResponse)
+async def get_report_manual_recovery(
+    report_id: UUID,
+    principal: CurrentPrincipal = Depends(get_current_principal),
+) -> ManualRecoveryResponse:
+    handler = GetReportManualRecoveryHandler(uow=SqlAlchemyUnitOfWork())
+    recovery_input = await handler.handle(
+        report_id=report_id, organization_id=principal.organization_id
+    )
+    return ManualRecoveryResponse(raw_notes=recovery_input.raw_notes)
 
 
 @router.patch("/{report_id}/revision", response_model=ReportResponse)

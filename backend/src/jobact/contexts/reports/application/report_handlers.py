@@ -27,6 +27,11 @@ from jobact.workflows.report_fulfillment.run import WorkflowRun
 from jobact.workflows.report_fulfillment.states import WorkflowState
 
 
+class ManualRecoveryInput:
+    def __init__(self, *, raw_notes: str) -> None:
+        self.raw_notes = raw_notes
+
+
 class CreateReportHandler:
     def __init__(self, uow: UnitOfWork, clock: Clock, id_generator: IdGenerator) -> None:
         self._uow = uow
@@ -88,6 +93,47 @@ class GetReportHandler:
                 f"Report {report_id} does not belong to organization {organization_id}."
             )
         return report
+
+
+class GetReportManualRecoveryHandler:
+    """Return drafting input only for the owning org's parked workflow."""
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    async def handle(
+        self, *, report_id: UUID, organization_id: UUID
+    ) -> ManualRecoveryInput:
+        async with self._uow:
+            report = await ReportRepository(self._uow.session).get_by_id(report_id)
+            if report is None or report.organization_id != organization_id:
+                raise AuthorizationError(
+                    f"Report {report_id} does not belong to organization {organization_id}."
+                )
+
+            run = await WorkflowRunRepository(self._uow.session).get_by_subject(report_id)
+            if (
+                run is None
+                or run.organization_id != organization_id
+                or run.workflow_type != "report_fulfillment"
+                or run.state != WorkflowState.MANUAL_INPUT_REQUIRED
+            ):
+                raise AuthorizationError(
+                    f"Manual recovery is unavailable for report {report_id}."
+                )
+
+            drafting_input = run.input_data.get("drafting")
+            raw_notes = (
+                drafting_input.get("raw_notes")
+                if isinstance(drafting_input, dict)
+                else None
+            )
+            if not isinstance(raw_notes, str):
+                raise AuthorizationError(
+                    f"Manual recovery is unavailable for report {report_id}."
+                )
+
+        return ManualRecoveryInput(raw_notes=raw_notes)
 
 
 class ListReportsHandler:

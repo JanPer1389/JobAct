@@ -6,7 +6,10 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import delete
 
-from jobact.contexts.reports.application.report_handlers import CreateReportHandler
+from jobact.contexts.reports.application.report_handlers import (
+    CreateReportHandler,
+    GetReportManualRecoveryHandler,
+)
 from jobact.contexts.reports.infrastructure.report_repository import ReportRepository
 from jobact.contexts.visits.domain.visit import Visit
 from jobact.contexts.visits.infrastructure.visit_repository import VisitRepository
@@ -23,6 +26,7 @@ from jobact.shared.infrastructure.postgres.workflow_tables import (
     workflow_runs_table,
     workflow_steps_table,
 )
+from jobact.shared.application.authorization import AuthorizationError
 from jobact.workflows.report_fulfillment.repository import WorkflowRunRepository
 from jobact.workflows.report_fulfillment.states import WorkflowState
 from tests.fakes import FakeClock, FakeIdGenerator
@@ -88,3 +92,56 @@ async def test_create_report_starts_drafting_with_the_request_raw_notes(
     assert run.input_data == {
         "drafting": {"raw_notes": "Replaced the leaking kitchen sink drain."}
     }
+
+
+@pytest.mark.asyncio
+async def test_manual_recovery_returns_persisted_notes_only_to_owning_org(
+    clean_report_creation_tables,
+) -> None:
+    org_id = uuid4()
+    raw_notes = "Replaced the leaking kitchen sink drain."
+    visit = Visit.start(
+        id=uuid4(),
+        organization_id=org_id,
+        customer_id=uuid4(),
+        technician_id=uuid4(),
+        started_at=datetime(2026, 8, 26, tzinfo=UTC),
+    )
+    session_factory = get_sessionmaker()
+    async with session_factory() as session, session.begin():
+        await VisitRepository(session).add(visit)
+
+    report = await CreateReportHandler(
+        uow=SqlAlchemyUnitOfWork(),
+        clock=FakeClock(datetime(2026, 8, 26, tzinfo=UTC)),
+        id_generator=FakeIdGenerator(),
+    ).handle(
+        organization_id=org_id,
+        visit_id=visit.id,
+        created_by=visit.technician_id,
+        raw_notes=raw_notes,
+    )
+
+    handler = GetReportManualRecoveryHandler(uow=SqlAlchemyUnitOfWork())
+    with pytest.raises(AuthorizationError):
+        await handler.handle(report_id=report.id, organization_id=org_id)
+
+    async with SqlAlchemyUnitOfWork() as uow:
+        run_repo = WorkflowRunRepository(uow.session)
+        run = await run_repo.get_by_subject(report.id)
+        assert run is not None
+        expected_version = run.state_version
+        run.record_failure(
+            error="TimeoutError occurred while executing the workflow step.",
+            now=datetime(2026, 8, 26, tzinfo=UTC),
+            max_attempts=1,
+        )
+        await run_repo.save(run, expected_version=expected_version)
+
+    recovery_input = await handler.handle(
+        report_id=report.id, organization_id=org_id
+    )
+
+    assert recovery_input.raw_notes == raw_notes
+    with pytest.raises(AuthorizationError):
+        await handler.handle(report_id=report.id, organization_id=uuid4())
