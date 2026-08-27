@@ -27,3 +27,6 @@ def test_openapi_exposes_the_report_and_manual_recovery_endpoints() -> None:
         "properties"
     ]
     assert {"workflow_state", "pdf_media_asset_id"} <= set(report_properties)
+    assert set(paths["/api/v1/reports/{report_id}/audits"]) == {"get", "post"}
+    assert set(paths["/api/v1/reports/{report_id}/audits/{attempt_id}"]) == {"get"}
+    assert set(paths["/api/v1/reports/{report_id}/audits/{attempt_id}/acknowledge"]) == {"post"}

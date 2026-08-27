@@ -46,8 +46,10 @@ import {
   type CustomerResponse,
   type MediaUploadResponse,
   type ReportResponse,
+  type VisualAuditAttemptResponse,
   type VisitResponse,
 } from "@/lib/jobact/api"
+import { uploadVisitPhoto } from "@/lib/jobact/media"
 import type { SignatureCanvasHandle } from "../ui"
 
 function useCustomer() {
@@ -104,6 +106,9 @@ export function AddCustomerScreen() {
         report: undefined,
         beforePhotos: 0,
         afterPhotos: 0,
+        beforePhotoAssets: [],
+        afterPhotoAssets: [],
+        audit: undefined,
         workCompleted: "",
         amount: "",
         signed: false,
@@ -426,32 +431,57 @@ export function GpsScreen() {
 
 export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
   const { back, navigate, frame, draft, setDraft } = useNav()
-  const count = phase === "before" ? draft.beforePhotos : draft.afterPhotos
-  const seeded = useRef(false)
+  const photos = phase === "before" ? draft.beforePhotoAssets : draft.afterPhotoAssets
+  const maxPhotos = phase === "before" ? 6 : draft.beforePhotoAssets.length
   const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const photosKey = useRef(crypto.randomUUID())
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  // seed with a sensible default so previews look real
-  useEffect(() => {
-    if (seeded.current) return
-    seeded.current = true
-    if (phase === "before" && draft.beforePhotos === 0) setDraft({ beforePhotos: 2 })
-    if (phase === "after" && draft.afterPhotos === 0) setDraft({ afterPhotos: 2 })
-  }, [phase, draft.beforePhotos, draft.afterPhotos, setDraft])
-
-  function add() {
-    if (phase === "before") setDraft({ beforePhotos: draft.beforePhotos + 1 })
-    else setDraft({ afterPhotos: draft.afterPhotos + 1 })
+  async function addFiles(files: FileList | null) {
+    if (!files || !draft.visitId) return
+    setUploading(true)
+    setError(null)
+    try {
+      let next = [...photos]
+      for (const file of Array.from(files).slice(0, maxPhotos - photos.length)) {
+        next = [...next, await uploadVisitPhoto(file, phase, draft.visitId)]
+        if (phase === "before") {
+          setDraft({ beforePhotoAssets: next, beforePhotos: next.length })
+        } else {
+          setDraft({ afterPhotoAssets: next, afterPhotos: next.length })
+        }
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not upload photo.")
+    } finally {
+      setUploading(false)
+      if (inputRef.current) inputRef.current.value = ""
+    }
   }
-  function removeAt() {
-    if (phase === "before") setDraft({ beforePhotos: Math.max(0, draft.beforePhotos - 1) })
-    else setDraft({ afterPhotos: Math.max(0, draft.afterPhotos - 1) })
+
+  function removeAt(index: number) {
+    const next = photos.filter((_, photoIndex) => photoIndex !== index)
+    URL.revokeObjectURL(photos[index].previewUrl)
+    if (phase === "before") {
+      setDraft({
+        beforePhotoAssets: next,
+        beforePhotos: next.length,
+        afterPhotoAssets: [],
+        afterPhotos: 0,
+        audit: undefined,
+      })
+    } else {
+      setDraft({ afterPhotoAssets: next, afterPhotos: next.length, audit: undefined })
+    }
   }
 
   const step = phase === "before" ? 3 : 5
   const title = phase === "before" ? "Before photos" : "After photos"
-  const next = phase === "before" ? "voice" : "signature"
+  const next = phase === "before" ? "voice" : "auditProcessing"
+  const count = photos.length
+  const pairCountValid = phase === "before" ? count >= 1 : count === draft.beforePhotoAssets.length
 
   async function continueFlow() {
     if (!draft.visitId) return
@@ -500,9 +530,31 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
         </div>
 
         <div className="mt-4 grid grid-cols-3 gap-2.5 sm:grid-cols-4">
-          <CaptureButton onCapture={add} />
-          {Array.from({ length: count }).map((_, i) => (
-            <PhotoThumb key={i} tone={phase} index={i + 1} onRemove={removeAt} />
+          {count < maxPhotos && (
+            <CaptureButton onCapture={() => inputRef.current?.click()} />
+          )}
+          <input
+            ref={inputRef}
+            className="hidden"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            capture="environment"
+            multiple
+            onChange={(event) => void addFiles(event.target.files)}
+          />
+          {photos.map((photo, i) => (
+            <div key={photo.assetId} className="relative aspect-square overflow-hidden rounded-xl border border-border bg-muted">
+              <img src={photo.previewUrl} alt={`${title} ${i + 1}`} className="size-full object-cover" />
+              <span className="absolute bottom-1 left-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white">Pair {i + 1}</span>
+              <button
+                type="button"
+                aria-label={`Remove ${title.toLowerCase()} ${i + 1}`}
+                onClick={() => removeAt(i)}
+                className="absolute right-1 top-1 grid size-7 place-items-center rounded-full bg-black/70 text-white"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </div>
           ))}
         </div>
 
@@ -513,14 +565,15 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
           <p className="text-xs leading-relaxed text-muted-foreground">
             {phase === "before"
               ? "Photograph the problem area before you start. These become part of the proof archive."
-              : "Capture the completed work from the same angles as your before photos for a clear comparison."}
+              : `Capture exactly ${draft.beforePhotoAssets.length} completed-work photos, in the same order and angles as the before photos.`}
           </p>
         </Card>
+        {uploading && <p className="mt-3 text-sm text-muted-foreground">Normalizing and uploading photo…</p>}
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
-        <Button size="lg" fullWidth iconRight={ArrowRight} disabled={count === 0 || saving} onClick={continueFlow}>
-          Continue
+        <Button size="lg" fullWidth iconRight={ArrowRight} disabled={!pairCountValid || saving || uploading} onClick={continueFlow}>
+          {phase === "after" ? "Start visual audit" : "Continue"}
         </Button>
       </FlowFooter>
     </>
@@ -1029,6 +1082,222 @@ export function EditReportScreen() {
         <Button size="lg" fullWidth icon={Check} disabled={saving} onClick={save}>
           {typingNotes ? "Use these notes" : saving ? "Saving…" : "Save changes"}
         </Button>
+      </FlowFooter>
+    </>
+  )
+}
+
+/* ---------------------------- VISUAL AUDIT --------------------------- */
+
+export function AuditProcessingScreen() {
+  const { replace, frame, draft, setDraft } = useNav()
+  const [error, setError] = useState<string | null>(null)
+  const started = useRef(false)
+
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    let cancelled = false
+
+    async function runAudit() {
+      if (!draft.reportId) throw new Error("The report is missing.")
+      if (
+        draft.beforePhotoAssets.length === 0 ||
+        draft.beforePhotoAssets.length !== draft.afterPhotoAssets.length
+      ) {
+        throw new Error("Before and after photos must form equal pairs.")
+      }
+      const attempt = await apiFetch<VisualAuditAttemptResponse>(
+        `/api/v1/reports/${draft.reportId}/audits`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            before_photo_asset_ids: draft.beforePhotoAssets.map((photo) => photo.assetId),
+            after_photo_asset_ids: draft.afterPhotoAssets.map((photo) => photo.assetId),
+          }),
+        },
+      )
+      if (cancelled) return
+      setDraft({ audit: attempt })
+
+      for (let poll = 0; poll < 90 && !cancelled; poll += 1) {
+        if (poll > 0) await new Promise((resolve) => setTimeout(resolve, 1000))
+        const current = await apiFetch<VisualAuditAttemptResponse>(
+          `/api/v1/reports/${draft.reportId}/audits/${attempt.id}`,
+        )
+        if (cancelled) return
+        setDraft({ audit: current })
+        if (current.status === "succeeded" || current.status === "failed") {
+          replace("auditResult", frame.params)
+          return
+        }
+      }
+      throw new Error("The audit is still processing. Try checking it again.")
+    }
+
+    runAudit().catch((reason: unknown) => {
+      if (!cancelled) {
+        setError(reason instanceof Error ? reason.message : "Could not run the visual audit.")
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [draft.afterPhotoAssets, draft.beforePhotoAssets, draft.reportId, frame.params, replace, setDraft])
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
+      <div className="grid size-20 place-items-center rounded-3xl border border-border bg-card">
+        {error ? <TriangleAlert className="size-8 text-warning" /> : <LoaderCircle className="size-8 animate-spin text-foreground" />}
+      </div>
+      <h2 className="mt-6 text-lg font-semibold text-foreground">
+        {error ? "Audit needs attention" : "Comparing before and after photos"}
+      </h2>
+      <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
+        {error ?? "The visual auditor is checking the visible result, workmanship, photo limitations, and price."}
+      </p>
+      {error && (
+        <div className="mt-6 flex gap-3">
+          <Button variant="secondary" onClick={() => replace("afterPhotos", frame.params)}>Review photos</Button>
+          <Button onClick={() => replace("auditProcessing", frame.params)}>Retry audit</Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AuditList({ title, items }: { title: string; items: string[] }) {
+  if (items.length === 0) return null
+  return (
+    <section className="mt-5">
+      <SectionLabel>{title}</SectionLabel>
+      <Card className="mt-2 p-4">
+        <ul className="space-y-2 text-sm text-foreground">
+          {items.map((item, index) => <li key={`${title}-${index}`}>• {item}</li>)}
+        </ul>
+      </Card>
+    </section>
+  )
+}
+
+export function AuditResultScreen() {
+  const { back, navigate, replace, frame, draft, setDraft } = useNav()
+  const [acknowledging, setAcknowledging] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const audit = draft.audit
+  const result = audit?.result
+
+  async function acknowledgeAndContinue() {
+    if (!draft.reportId || !audit) return
+    setAcknowledging(true)
+    setError(null)
+    try {
+      const acknowledged = await apiFetch<VisualAuditAttemptResponse>(
+        `/api/v1/reports/${draft.reportId}/audits/${audit.id}/acknowledge`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            reason: audit.status === "succeeded" ? "result_reviewed" : "continued_without_result",
+          }),
+        },
+      )
+      setDraft({ audit: acknowledged })
+      navigate("signature", frame.params)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not acknowledge the audit.")
+    } finally {
+      setAcknowledging(false)
+    }
+  }
+
+  if (!audit) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
+        <TriangleAlert className="size-8 text-warning" />
+        <p className="mt-4 text-sm text-muted-foreground">No visual audit is available.</p>
+        <Button className="mt-5" onClick={() => replace("afterPhotos", frame.params)}>Return to after photos</Button>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <ScreenHeader title="Visual audit" subtitle="Review before customer signature" onBack={back} />
+      <Page width="form">
+        {result ? (
+          <>
+            <Card className="p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{result.verdict.replaceAll("_", " ")}</p>
+                  <p className="mt-2 text-sm leading-relaxed text-foreground">{result.summary}</p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="font-mono text-3xl font-semibold text-foreground">{result.quality_assessment.score}/10</p>
+                  <p className="text-xs text-muted-foreground">{result.confidence}% confidence</p>
+                </div>
+              </div>
+            </Card>
+            <section className="mt-5">
+              <SectionLabel>Comparison</SectionLabel>
+              <Card className="mt-2 p-4 text-sm leading-relaxed text-foreground">
+                <p>{result.comparison.match_explanation}</p>
+                <ul className="mt-3 space-y-1 text-muted-foreground">
+                  {result.comparison.visible_changes.map((item, index) => <li key={index}>• {item}</li>)}
+                </ul>
+              </Card>
+            </section>
+            <AuditList title="Strengths" items={result.quality_assessment.strengths} />
+            <AuditList title="Issues" items={result.quality_assessment.issues} />
+            <AuditList title="Unverified" items={result.quality_assessment.unverified_items} />
+            <section className="mt-5">
+              <SectionLabel>Price assessment</SectionLabel>
+              <Card className="mt-2 p-4">
+                <p className="text-sm font-semibold capitalize text-foreground">{result.price_assessment.price_verdict.replaceAll("_", " ")}</p>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{result.price_assessment.price_explanation}</p>
+              </Card>
+            </section>
+            {result.evidence.length > 0 && (
+              <section className="mt-5">
+                <SectionLabel>Evidence</SectionLabel>
+                <div className="mt-2 space-y-2">
+                  {result.evidence.map((item, index) => (
+                    <Card key={index} className="p-4 text-sm">
+                      <p className="text-foreground">{item.observation}</p>
+                      <p className="mt-1 text-muted-foreground">{item.impact}</p>
+                    </Card>
+                  ))}
+                </div>
+              </section>
+            )}
+            <AuditList title="Limitations" items={result.limitations} />
+            <AuditList title="Recommended next steps" items={result.recommended_next_steps} />
+          </>
+        ) : (
+          <Card className="flex gap-3 p-4">
+            <TriangleAlert className="size-5 shrink-0 text-warning" />
+            <div>
+              <p className="text-sm font-semibold text-foreground">The audit could not be completed</p>
+              <p className="mt-1 text-sm text-muted-foreground">No assessment was fabricated. You may rerun it or explicitly continue without a result.</p>
+            </div>
+          </Card>
+        )}
+        <Card className="mt-5 p-4 text-xs leading-relaxed text-muted-foreground">
+          This visual assessment does not substitute for a legal opinion, technical acceptance inspection, or construction expert review.
+        </Card>
+        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+      </Page>
+      <FlowFooter>
+        <div className="space-y-2.5">
+          <Button size="lg" fullWidth iconRight={ArrowRight} disabled={acknowledging} onClick={acknowledgeAndContinue}>
+            {acknowledging ? "Saving acknowledgement…" : result ? "Acknowledge & continue" : "Continue without result"}
+          </Button>
+          <div className="grid grid-cols-3 gap-2">
+            <Button variant="secondary" onClick={() => replace("afterPhotos", frame.params)}>Recapture</Button>
+            <Button variant="secondary" onClick={() => navigate("editReport", frame.params)}>Edit report</Button>
+            <Button variant="secondary" onClick={() => replace("auditProcessing", frame.params)}>Rerun</Button>
+          </div>
+        </div>
       </FlowFooter>
     </>
   )

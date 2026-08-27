@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import type { ReportResponse } from "@/lib/jobact/api"
+import type { ReportResponse, VisualAuditAttemptResponse } from "@/lib/jobact/api"
 
 export type Screen =
   | "splash"
@@ -23,6 +23,8 @@ export type Screen =
   | "voice"
   | "voiceProcessing"
   | "afterPhotos"
+  | "auditProcessing"
+  | "auditResult"
   | "reportDraft"
   | "editReport"
   | "signature"
@@ -72,6 +74,8 @@ export interface DraftState {
   address?: string
   beforePhotos: number
   afterPhotos: number
+  beforePhotoAssets: DraftPhoto[]
+  afterPhotoAssets: DraftPhoto[]
   workCompleted: string
   amount: string
   signed: boolean
@@ -81,11 +85,19 @@ export interface DraftState {
   signatureAssetId?: string
   rawNotes: string
   report?: ReportResponse
+  audit?: VisualAuditAttemptResponse
+}
+
+export interface DraftPhoto {
+  assetId: string
+  previewUrl: string
 }
 
 const initialDraft: DraftState = {
   beforePhotos: 0,
   afterPhotos: 0,
+  beforePhotoAssets: [],
+  afterPhotoAssets: [],
   workCompleted: "",
   amount: "",
   signed: false,
@@ -132,7 +144,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
       session,
       setSession,
     }
-  }, [back, draft, navigate, replace, reset, session, setDraft, setSession])
+  }, [back, draft, navigate, replace, reset, session, setDraft, setSession, stack])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

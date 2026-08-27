@@ -1,5 +1,7 @@
 "use client"
 
+import { useEffect, useState } from "react"
+
 import {
   MapPin,
   Phone,
@@ -28,8 +30,10 @@ import {
   customers as allCustomers,
   reports as allReports,
   currency,
+  type ReportStatus,
 } from "@/lib/jobact/data"
 import { useNav } from "@/lib/jobact/store"
+import { apiFetch, type ReportResponse, type VisualAuditAttemptResponse } from "@/lib/jobact/api"
 
 /* -------------------------- CUSTOMER DETAIL --------------------------- */
 
@@ -252,6 +256,117 @@ export function ReportDetailScreen() {
           </div>
         </ActionBar>
       </div>
+    </>
+  )
+}
+
+export function BackendReportDetailScreen() {
+  const { back, frame } = useNav()
+  const reportId = frame.params.reportId as string
+  const [report, setReport] = useState<ReportResponse | null>(null)
+  const [audits, setAudits] = useState<VisualAuditAttemptResponse[]>([])
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([
+      apiFetch<ReportResponse>(`/api/v1/reports/${reportId}`),
+      apiFetch<VisualAuditAttemptResponse[]>(`/api/v1/reports/${reportId}/audits`),
+    ])
+      .then(([nextReport, nextAudits]) => {
+        if (!cancelled) {
+          setReport(nextReport)
+          setAudits(nextAudits)
+        }
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not load report.")
+      })
+    return () => { cancelled = true }
+  }, [reportId])
+
+  if (!report) {
+    return (
+      <>
+        <ScreenHeader title="Report" subtitle={reportId} onBack={back} width="wide" />
+        <Page width="wide"><Card className="p-5 text-sm text-muted-foreground">{error ?? "Loading report…"}</Card></Page>
+      </>
+    )
+  }
+
+  const revision = report.current_revision
+  return (
+    <>
+      <ScreenHeader
+        title={report.human_id}
+        subtitle={`Revision ${revision.revision_no}`}
+        onBack={back}
+        width="wide"
+        right={<StatusBadge status={report.status as ReportStatus} />}
+      />
+      <Page width="wide">
+        <div className="grid gap-6 lg:grid-cols-3 lg:gap-8">
+          <div className="space-y-6 lg:col-span-2">
+            <section>
+              <SectionLabel>Work completed</SectionLabel>
+              <Card className="mt-2 p-5 text-sm leading-relaxed text-foreground">{revision.work_completed}</Card>
+            </section>
+            {revision.materials.length > 0 && (
+              <section>
+                <SectionLabel>Materials / consumables</SectionLabel>
+                <Card className="mt-2 divide-y divide-border">
+                  {revision.materials.map((material) => (
+                    <div key={`${material.label}-${material.qty}`} className="flex justify-between p-3.5 text-sm">
+                      <span>{material.label}</span><span className="text-muted-foreground">×{material.qty}</span>
+                    </div>
+                  ))}
+                </Card>
+              </section>
+            )}
+            <section>
+              <SectionLabel>Visual audit history</SectionLabel>
+              {audits.length === 0 ? (
+                <Card className="mt-2 p-4 text-sm text-muted-foreground">No visual audit attempts for this report.</Card>
+              ) : (
+                <div className="mt-2 space-y-3">
+                  {audits.map((audit) => (
+                    <Card key={audit.id} className="p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold capitalize text-foreground">{audit.result?.verdict.replaceAll("_", " ") ?? audit.status}</p>
+                        <span className="text-xs text-muted-foreground">{audit.before_photo_asset_ids.length} pair{audit.before_photo_asset_ids.length === 1 ? "" : "s"}</span>
+                      </div>
+                      {audit.result && (
+                        <>
+                          <p className="mt-2 text-sm text-muted-foreground">{audit.result.summary}</p>
+                          <p className="mt-2 text-xs text-muted-foreground">Quality {audit.result.quality_assessment.score}/10 · Confidence {audit.result.confidence}% · {audit.result.price_assessment.price_verdict.replaceAll("_", " ")}</p>
+                        </>
+                      )}
+                      <p className="mt-2 text-xs text-muted-foreground">{audit.acknowledged_at ? `Acknowledged: ${audit.acknowledgement_reason}` : "Not acknowledged"}</p>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+          <div className="space-y-6">
+            <section>
+              <SectionLabel>Amount</SectionLabel>
+              <Card className="mt-2 p-4 font-mono text-2xl font-semibold text-foreground">
+                {revision.amount_cents === null ? "Not specified" : `${(revision.amount_cents / 100).toFixed(2)} ${revision.currency}`}
+              </Card>
+            </section>
+            <section>
+              <SectionLabel>Report details</SectionLabel>
+              <Card className="mt-2 divide-y divide-border">
+                <DetailRow icon={FileText} label="Report ID" value={report.human_id} mono />
+                <DetailRow icon={Calendar} label="Revision" value={String(revision.revision_no)} />
+                <DetailRow icon={ShieldCheck} label="Workflow" value={report.workflow_state ?? report.status} />
+                <DetailRow icon={ShieldCheck} label="Signature" value={report.signed_at ? new Date(report.signed_at).toLocaleString() : "Awaiting signature"} />
+              </Card>
+            </section>
+          </div>
+        </div>
+      </Page>
     </>
   )
 }

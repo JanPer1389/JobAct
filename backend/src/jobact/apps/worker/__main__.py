@@ -37,6 +37,7 @@ from jobact.shared.infrastructure.postgres.outbox_publisher import (
 from jobact.shared.infrastructure.postgres.tables import inbox_table
 from jobact.shared.infrastructure.redis.client import get_redis_client
 from jobact.shared.infrastructure.redis.streams import RedisStreamsBroker
+from jobact.workflows.visual_audit.dispatcher import process_visual_audit_event
 
 _PUBLISH_INTERVAL_SECONDS = 2.0
 _CONSUMER_GROUP = "worker"
@@ -46,7 +47,9 @@ _RETRY_BASE_DELAY_SECONDS = 1.0
 
 # event_type -> handler. Empty for now -- nothing in this milestone
 # consumes outbox events yet.
-HANDLER_REGISTRY: dict[str, Callable[[dict], Awaitable[None]]] = {}
+HANDLER_REGISTRY: dict[str, Callable[[dict], Awaitable[None]]] = {
+    "VisualAuditRequested": process_visual_audit_event,
+}
 
 
 async def _already_processed(event_id: UUID) -> bool:
@@ -92,7 +95,7 @@ async def _dispatch(message: Message) -> None:
             if handler is not None:
                 await handler(message.payload)
             break
-        except Exception:
+        except Exception:  # noqa: BLE001 - retry boundary for all event-handler failures
             attempt += 1
             if attempt >= _MAX_ATTEMPTS:
                 # Exhausted retries -- do not ack, do not record as
@@ -125,7 +128,10 @@ async def main() -> None:
     # loop alone is enough to keep platform.outbox draining. A later
     # milestone that adds a real handler also adds its stream's consumer
     # loop to this gather() call.
-    await asyncio.gather(_run_publisher_loop(broker))
+    await asyncio.gather(
+        _run_publisher_loop(broker),
+        _run_consumer_loop(broker, "outbox.VisualAuditAttempt"),
+    )
 
 
 if __name__ == "__main__":

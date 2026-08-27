@@ -18,10 +18,12 @@ import {
   VoiceProcessingScreen,
   ReportDraftScreen,
   EditReportScreen,
+  AuditProcessingScreen,
+  AuditResultScreen,
   SignatureScreen,
   CompletedScreen,
 } from "./screens/flow"
-import { CustomerDetailScreen, ReportDetailScreen } from "./screens/detail"
+import { BackendReportDetailScreen, CustomerDetailScreen } from "./screens/detail"
 import { OfflineScreen, SyncScreen, StatesScreen } from "./screens/states"
 
 const tabScreens: Screen[] = ["home", "reports", "customers", "profile"]
@@ -80,12 +82,16 @@ function ScreenView({ screen }: { screen: Screen }) {
       return <ReportDraftScreen />
     case "editReport":
       return <EditReportScreen />
+    case "auditProcessing":
+      return <AuditProcessingScreen />
+    case "auditResult":
+      return <AuditResultScreen />
     case "signature":
       return <SignatureScreen />
     case "completed":
       return <CompletedScreen />
     case "reportDetail":
-      return <ReportDetailScreen />
+      return <BackendReportDetailScreen />
     case "profile":
       return <ProfileScreen />
     case "offline":

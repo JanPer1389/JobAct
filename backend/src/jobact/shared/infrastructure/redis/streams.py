@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from redis.asyncio import Redis
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from jobact.shared.application.ports import Message
 
@@ -41,9 +42,14 @@ class RedisStreamsBroker:
                 raise
 
         while True:
-            response = await self._redis.xreadgroup(
-                group, consumer, {stream: ">"}, count=_READ_COUNT, block=_BLOCK_MS
-            )
+            try:
+                response = await self._redis.xreadgroup(
+                    group, consumer, {stream: ">"}, count=_READ_COUNT, block=_BLOCK_MS
+                )
+            except RedisTimeoutError:
+                # redis-py can surface the normal end of a blocking stream
+                # read as a socket timeout instead of an empty response.
+                continue
             if not response:
                 continue
             # `xreadgroup`'s declared return type is a union that also

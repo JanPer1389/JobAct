@@ -7,7 +7,7 @@ from uuid import UUID
 from jobact.shared.infrastructure.clock import SystemClock
 from jobact.shared.infrastructure.config import get_settings
 from jobact.shared.infrastructure.id_generator import UuidIdGenerator
-from jobact.shared.infrastructure.llm.litellm_gateway import LiteLlmGateway
+from jobact.shared.infrastructure.llm.connectors import build_ai_connector
 from jobact.shared.infrastructure.postgres.uow import SqlAlchemyUnitOfWork
 from jobact.workflows.report_fulfillment.activities.generate_report_draft import (
     GenerateReportDraftActivity,
@@ -31,11 +31,11 @@ async def generate_draft_for_report(report_id: UUID) -> None:
     drafting_input = run.input_data.get("drafting")
     raw_notes = drafting_input.get("raw_notes") if isinstance(drafting_input, dict) else None
     if not isinstance(raw_notes, str):
-        raise ValueError(f"Workflow run {run.id} has no drafting raw_notes.")
+        raise TypeError(f"Workflow run {run.id} has no drafting raw_notes.")
 
     activity = GenerateReportDraftActivity(
         uow=SqlAlchemyUnitOfWork(),
-        llm_gateway=LiteLlmGateway(get_settings()),
+        llm_gateway=build_ai_connector(get_settings()),
         clock=SystemClock(),
         id_generator=UuidIdGenerator(),
     )
