@@ -15,7 +15,7 @@ importing infrastructure.
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
 
@@ -160,6 +160,22 @@ class LlmGateway(Protocol):
     def api_key(self) -> str: ...
 
     def model_name(self, alias: str) -> str: ...
+
+
+@runtime_checkable
+class AiConnector(Protocol):
+    """Provider-neutral model construction used by AI workflows.
+
+    ``Any`` deliberately keeps PydanticAI/provider classes out of the application port.
+    Concrete connectors live in infrastructure.
+    """
+
+    @property
+    def provider_name(self) -> str: ...
+
+    def model_name(self, alias: str) -> str: ...
+
+    def build_model(self, alias: str, http_client: Any | None = None) -> Any: ...
 
 
 @runtime_checkable

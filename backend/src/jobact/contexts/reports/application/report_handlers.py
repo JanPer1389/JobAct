@@ -19,6 +19,10 @@ from jobact.contexts.media.infrastructure.media_asset_repository import (
 from jobact.contexts.reports.domain.report import Material, Report
 from jobact.contexts.reports.infrastructure.report_repository import ReportRepository
 from jobact.contexts.visits.infrastructure.visit_repository import VisitRepository
+from jobact.contexts.visual_audits.domain.visual_audit import VisualAuditStateError
+from jobact.contexts.visual_audits.infrastructure.visual_audit_repository import (
+    VisualAuditRepository,
+)
 from jobact.shared.application.authorization import AuthorizationError
 from jobact.shared.application.ports import Clock, IdGenerator
 from jobact.shared.application.uow import UnitOfWork
@@ -226,6 +230,9 @@ class ReadyForSignatureHandler:
             run = await run_repo.get_by_subject(report_id)
             _authorize_report_workflow(run, report_id, organization_id)
 
+            audit = await VisualAuditRepository(self._uow.session).latest_by_report(report_id, organization_id)
+            _require_current_audit_acknowledgement(report, audit)
+
             report.mark_ready_for_signature(now=self._clock.now())
             await report_repo.save(report)
             expected_version = run.state_version
@@ -306,6 +313,20 @@ def _authorize_report_workflow(
         raise AuthorizationError(
             f"Workflow for report {report_id} does not belong to "
             f"organization {organization_id}."
+        )
+
+
+def _require_current_audit_acknowledgement(report: Report, audit) -> None:
+    revision = report.current_revision
+    if (
+        audit is None
+        or not audit.is_acknowledged_for(revision.id)
+        or audit.work_description != revision.work_completed
+        or audit.amount_cents != revision.amount_cents
+        or audit.currency != revision.currency
+    ):
+        raise VisualAuditStateError(
+            "A visual audit for the current report content must be acknowledged before signature."
         )
 
 

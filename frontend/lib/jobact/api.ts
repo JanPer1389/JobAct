@@ -79,6 +79,55 @@ export interface MediaUploadResponse {
   expires_at: string
 }
 
+export interface VisualAuditResult {
+  verdict: "high_quality" | "partially_completed" | "poor_quality" | "insufficient_data"
+  confidence: number
+  summary: string
+  comparison: {
+    visible_changes: string[]
+    work_matches_description: boolean
+    match_explanation: string
+  }
+  quality_assessment: {
+    score: number
+    strengths: string[]
+    issues: string[]
+    unverified_items: string[]
+  }
+  price_assessment: {
+    provided_price_usd: number | null
+    fair_price_range_usd: { min: number | null; max: number | null }
+    price_verdict: string
+    price_explanation: string
+  }
+  evidence: Array<{ observation: string; impact: string }>
+  limitations: string[]
+  recommended_next_steps: string[]
+}
+
+export interface VisualAuditAttemptResponse {
+  id: string
+  report_id: string
+  report_revision_id: string
+  status: "pending" | "running" | "succeeded" | "failed"
+  before_photo_asset_ids: string[]
+  after_photo_asset_ids: string[]
+  amount_cents: number | null
+  currency: string
+  provided_price_usd: number | null
+  usd_rub_rate: number
+  usd_rub_rate_date: string
+  usd_rub_rate_source: string
+  result: VisualAuditResult | null
+  model: string | null
+  failure_code: string | null
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+  acknowledged_at: string | null
+  acknowledgement_reason: "result_reviewed" | "continued_without_result" | null
+}
+
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"])
 
 export async function apiFetch<T>(

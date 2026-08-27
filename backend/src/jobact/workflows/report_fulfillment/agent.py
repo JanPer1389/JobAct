@@ -19,10 +19,8 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
 
-from jobact.shared.application.ports import LlmGateway
+from jobact.shared.application.ports import AiConnector
 
 
 class DraftedMaterial(BaseModel):
@@ -94,16 +92,9 @@ _SYSTEM_PROMPT = (
 
 
 def build_drafting_agent(
-    llm_gateway: LlmGateway, http_client: httpx.AsyncClient | None = None
+    connector: AiConnector, http_client: httpx.AsyncClient | None = None
 ) -> Agent[None, DraftedReport]:
-    model = OpenAIChatModel(
-        llm_gateway.model_name("report-drafter"),
-        provider=OpenAIProvider(
-            base_url=_openai_compatible_base_url(llm_gateway.base_url),
-            api_key=llm_gateway.api_key,
-            http_client=http_client,
-        ),
-    )
+    model = connector.build_model("report-drafter", http_client=http_client)
     return Agent(
         model,
         output_type=DraftedReport,
@@ -112,12 +103,12 @@ def build_drafting_agent(
     )
 
 
-async def draft_report(llm_gateway: LlmGateway, raw_notes: str) -> DraftingResult:
+async def draft_report(connector: AiConnector, raw_notes: str) -> DraftingResult:
     cost_capture = LiteLlmCostCapture()
     async with httpx.AsyncClient(
         event_hooks={"response": [cost_capture.capture]}
     ) as http_client:
-        agent = build_drafting_agent(llm_gateway, http_client=http_client)
+        agent = build_drafting_agent(connector, http_client=http_client)
         result = await agent.run(raw_notes)
     usage = result.usage
     return DraftingResult(
@@ -126,10 +117,5 @@ async def draft_report(llm_gateway: LlmGateway, raw_notes: str) -> DraftingResul
         completion_tokens=usage.output_tokens,
         cost_usd=cost_capture.cost_usd,
         model=cost_capture.model_name
-        or llm_gateway.model_name("report-drafter"),
+        or connector.model_name("report-drafter"),
     )
-
-
-def _openai_compatible_base_url(base_url: str) -> str:
-    normalized = base_url.rstrip("/")
-    return normalized if normalized.endswith("/v1") else f"{normalized}/v1"

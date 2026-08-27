@@ -144,6 +144,8 @@ class Report(AggregateRoot):
             revision.currency = currency
         if materials is not None:
             revision.materials = list(materials)
+        revision.confirmed_by_user_at = None
+        revision.amount_confirmed_at = None
 
     def confirm(self, *, now: datetime) -> None:
         self._ensure_editable()

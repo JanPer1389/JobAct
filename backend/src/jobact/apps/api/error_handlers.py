@@ -17,11 +17,27 @@ from fastapi.responses import JSONResponse
 
 from jobact.apps.api.routers.auth import LogoutCacheDeleteFailedError
 from jobact.contexts.media.domain.media_asset import MediaVerificationError
+from jobact.contexts.reports.domain.report import ReportStateError
+from jobact.contexts.visual_audits.domain.visual_audit import (
+    VisualAuditStateError,
+    VisualAuditValidationError,
+)
 from jobact.contracts.errors.v1.envelope import ApiError, ErrorDetail, ErrorEnvelope
 from jobact.shared.application.authorization import AuthorizationError
 
 
 def register_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(VisualAuditValidationError)
+    async def _handle_visual_audit_validation(request: Request, exc: VisualAuditValidationError) -> JSONResponse:
+        envelope = ErrorEnvelope(type="visual-audit-validation", title="Unprocessable Entity", status=422, detail=str(exc), correlation_id=str(uuid.uuid4()))
+        return JSONResponse(status_code=422, content=envelope.model_dump())
+
+    @app.exception_handler(VisualAuditStateError)
+    @app.exception_handler(ReportStateError)
+    async def _handle_state_conflict(request: Request, exc: Exception) -> JSONResponse:
+        envelope = ErrorEnvelope(type="state-conflict", title="Conflict", status=409, detail=str(exc), correlation_id=str(uuid.uuid4()))
+        return JSONResponse(status_code=409, content=envelope.model_dump())
+
     @app.exception_handler(MediaVerificationError)
     async def _handle_media_verification_error(
         request: Request, exc: MediaVerificationError

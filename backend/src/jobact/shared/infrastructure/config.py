@@ -7,6 +7,8 @@ of framework code (no FastAPI, SQLAlchemy, redis-py, etc. imports here),
 since it is imported very early by everything else.
 """
 
+from datetime import date
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,6 +57,13 @@ class Settings(BaseSettings):
     # --- LiteLLM proxy ------------------------------------------------
     litellm_base_url: str = "http://localhost:4000"
     litellm_master_key: str = "sk-jobact-litellm"
+    openrouter_api_key: str = ""
+    anthropic_api_key: str = ""
+
+    # --- Local, deliberately dated FX snapshot -----------------------
+    usd_rub_rate: Decimal = Decimal("84.4635")
+    usd_rub_rate_date: date = date(2026, 8, 26)
+    usd_rub_rate_source: str = "CBR"
 
     # --- Google OAuth (not wired up until the auth task) -----------------
     google_client_id: str = ""

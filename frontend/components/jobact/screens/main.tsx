@@ -41,7 +41,7 @@ import {
   type ReportStatus,
 } from "@/lib/jobact/data"
 import { useNav } from "@/lib/jobact/store"
-import { apiFetch, type CustomerResponse } from "@/lib/jobact/api"
+import { apiFetch, type CustomerResponse, type ReportResponse } from "@/lib/jobact/api"
 
 /* -------------------------------- HOME -------------------------------- */
 
@@ -236,7 +236,7 @@ function StatTile({
 
 /* ------------------------------ REPORTS ------------------------------- */
 
-const filters: { key: ReportStatus | "all"; label: string }[] = [
+const filters = [
   { key: "all", label: "All" },
   { key: "completed", label: "Completed" },
   { key: "unsigned", label: "Unsigned" },
@@ -246,24 +246,36 @@ const filters: { key: ReportStatus | "all"; label: string }[] = [
 export function ReportsScreen() {
   const { navigate } = useNav()
   const [query, setQuery] = useState("")
-  const [filter, setFilter] = useState<ReportStatus | "all">("all")
+  const [filter, setFilter] = useState("all")
+  const [reports, setReports] = useState<ReportResponse[]>([])
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    apiFetch<ReportResponse[]>("/api/v1/reports")
+      .then((items) => { if (!cancelled) setReports(items) })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not load reports.")
+      })
+    return () => { cancelled = true }
+  }, [])
 
   const results = useMemo(() => {
-    return allReports.filter((r) => {
+    return reports.filter((r) => {
       const matchesFilter = filter === "all" || r.status === filter
       const matchesQuery =
         !query ||
-        r.customerName.toLowerCase().includes(query.toLowerCase()) ||
-        r.id.toLowerCase().includes(query.toLowerCase())
+        r.current_revision.work_completed.toLowerCase().includes(query.toLowerCase()) ||
+        r.human_id.toLowerCase().includes(query.toLowerCase())
       return matchesFilter && matchesQuery
     })
-  }, [query, filter])
+  }, [query, filter, reports])
 
   return (
     <>
       <PageHeader
         title="Reports"
-        subtitle={`${allReports.length} reports on record`}
+        subtitle={`${reports.length} reports on record`}
         right={
           <Button icon={Plus} className="hidden lg:inline-flex" onClick={() => navigate("customers", { picking: true })}>
             New report
@@ -297,6 +309,7 @@ export function ReportsScreen() {
       </PageHeader>
 
       <Page width="wide">
+        {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
         {results.length === 0 ? (
           <EmptyState
             icon={FileText}
@@ -306,12 +319,18 @@ export function ReportsScreen() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {results.map((r) => (
-              <ReportCard
-                key={r.id}
-                report={r}
-                showTech={CURRENT_USER.role === "owner"}
-                onClick={() => navigate("reportDetail", { reportId: r.id })}
-              />
+              <button key={r.id} onClick={() => navigate("reportDetail", { reportId: r.id })} className="text-left">
+                <Card className="h-full p-4 transition-colors hover:bg-accent">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-mono text-xs text-muted-foreground">{r.human_id}</p>
+                    <StatusBadge status={r.status as ReportStatus} />
+                  </div>
+                  <p className="mt-3 line-clamp-2 text-sm text-foreground">{r.current_revision.work_completed || "Report awaiting details"}</p>
+                  <p className="mt-3 font-mono text-lg font-semibold text-foreground">
+                    {r.current_revision.amount_cents === null ? "No price" : `${(r.current_revision.amount_cents / 100).toFixed(2)} ${r.current_revision.currency}`}
+                  </p>
+                </Card>
+              </button>
             ))}
           </div>
         )}
@@ -363,6 +382,9 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
       report: undefined,
       beforePhotos: 0,
       afterPhotos: 0,
+      beforePhotoAssets: [],
+      afterPhotoAssets: [],
+      audit: undefined,
       workCompleted: "",
       amount: "",
       signed: false,

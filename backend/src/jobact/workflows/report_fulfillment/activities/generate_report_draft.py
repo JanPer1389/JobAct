@@ -21,7 +21,7 @@ from uuid import UUID
 
 from jobact.contexts.reports.domain.report import Material, Report
 from jobact.contexts.reports.infrastructure.report_repository import ReportRepository
-from jobact.shared.application.ports import Clock, IdGenerator, LlmGateway
+from jobact.shared.application.ports import AiConnector, Clock, IdGenerator
 from jobact.shared.application.uow import UnitOfWork
 from jobact.workflows.report_fulfillment.agent import (
     DraftedReport,
@@ -39,14 +39,14 @@ _TEMPLATE_WORK_COMPLETED = (
     "and amount manually before proceeding."
 )
 
-DraftReport = Callable[[LlmGateway, str], Awaitable[DraftingResult]]
+DraftReport = Callable[[AiConnector, str], Awaitable[DraftingResult]]
 
 
 class GenerateReportDraftActivity:
     def __init__(
         self,
         uow: UnitOfWork,
-        llm_gateway: LlmGateway,
+        llm_gateway: AiConnector,
         clock: Clock,
         id_generator: IdGenerator,
         draft_report_fn: DraftReport = draft_report,
