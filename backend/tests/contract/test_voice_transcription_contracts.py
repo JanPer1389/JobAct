@@ -11,6 +11,21 @@ from jobact.workflows.report_fulfillment.run import WorkflowRun
 from jobact.workflows.report_fulfillment.states import WorkflowState
 
 
+def _draft_report():
+    from jobact.contexts.reports.domain.report import Report
+
+    return Report.create_draft(
+        id=uuid4(),
+        organization_id=uuid4(),
+        visit_id=uuid4(),
+        human_id="JA-2026-0001",
+        revision_id=uuid4(),
+        created_at=datetime(2026, 8, 28, tzinfo=UTC),
+        created_by=uuid4(),
+        currency="RUB",
+    )
+
+
 def test_create_report_requires_exactly_one_typed_input() -> None:
     visit_id = uuid4()
     audio_media_asset_id = uuid4()
@@ -130,3 +145,27 @@ def test_transcription_response_is_derived_from_workflow_data(
     assert response.detected_language == input_data["transcription"].get(
         "detected_language"
     )
+
+
+def test_list_report_responses_uses_preloaded_runs_for_transcription() -> None:
+    from jobact.apps.api.routers.reports import list_report_responses
+
+    report = _draft_report()
+    audio_media_asset_id = uuid4()
+    run = WorkflowRun.start(
+        id=uuid4(),
+        organization_id=report.organization_id,
+        workflow_type="report_fulfillment",
+        subject_id=report.id,
+        correlation_id=uuid4(),
+        initial_state=WorkflowState.TRANSCRIPTION_PENDING,
+        input_data={"transcription": {"media_asset_id": str(audio_media_asset_id)}},
+    )
+
+    responses = list_report_responses([report], {report.id: run})
+
+    assert len(responses) == 1
+    assert responses[0].workflow_state == "TRANSCRIPTION_PENDING"
+    assert responses[0].transcription is not None
+    assert responses[0].transcription.status == "queued"
+    assert responses[0].transcription.media_asset_id == audio_media_asset_id

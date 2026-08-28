@@ -4,6 +4,7 @@ map the aggregate back to a response DTO.
 """
 
 import logging
+from collections.abc import Mapping, Sequence
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
@@ -130,6 +131,23 @@ def transcription_from_workflow(
     )
 
 
+def list_report_responses(
+    reports: Sequence[Report], runs_by_report_id: Mapping[UUID, WorkflowRun]
+) -> list[ReportResponse]:
+    return [
+        _to_response(
+            report,
+            workflow_state=(
+                runs_by_report_id[report.id].state
+                if report.id in runs_by_report_id
+                else None
+            ),
+            transcription=transcription_from_workflow(runs_by_report_id.get(report.id)),
+        )
+        for report in reports
+    ]
+
+
 async def _to_enriched_response(report: Report) -> ReportResponse:
     async with SqlAlchemyUnitOfWork() as uow:
         run = await WorkflowRunRepository(uow.session).get_by_subject(report.id)
@@ -203,7 +221,13 @@ async def list_reports(
 ) -> list[ReportResponse]:
     handler = ListReportsHandler(uow=SqlAlchemyUnitOfWork())
     reports = await handler.handle(organization_id=principal.organization_id)
-    return [await _to_enriched_response(report) for report in reports]
+    async with SqlAlchemyUnitOfWork() as uow:
+        runs_by_report_id = await WorkflowRunRepository(
+            uow.session
+        ).list_by_subject_ids(
+            [report.id for report in reports], principal.organization_id
+        )
+    return list_report_responses(reports, runs_by_report_id)
 
 
 @router.get("/{report_id}", response_model=ReportResponse)

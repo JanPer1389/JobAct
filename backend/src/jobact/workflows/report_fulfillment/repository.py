@@ -8,6 +8,7 @@ raised as `WorkflowConcurrencyError` rather than silently overwritten.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import insert, select, update
@@ -63,6 +64,20 @@ class WorkflowRunRepository:
         if row is None:
             return None
         return _to_domain(row)
+
+    async def list_by_subject_ids(
+        self, subject_ids: Sequence[UUID], organization_id: UUID
+    ) -> dict[UUID, WorkflowRun]:
+        if not subject_ids:
+            return {}
+        result = await self._session.execute(
+            select(workflow_runs_table).where(
+                workflow_runs_table.c.subject_id.in_(subject_ids),
+                workflow_runs_table.c.organization_id == organization_id,
+            )
+        )
+        runs = [_to_domain(row) for row in result]
+        return {run.subject_id: run for run in runs}
 
     async def save(self, run: WorkflowRun, *, expected_version: int) -> None:
         result = await self._session.execute(
