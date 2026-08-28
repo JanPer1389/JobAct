@@ -13,13 +13,28 @@ from jobact.workflows.report_fulfillment.agent import (
 from tests.fakes import FakeLlmGateway
 
 
-def test_low_confidence_structured_output_rejects_a_proposed_amount() -> None:
-    """Removing the safety validation would let an uncertain price reach a report."""
+def test_drafted_report_carries_an_estimated_work_unit_count() -> None:
+    """The model reports work volume as a unit count, never a price -- the
+    application (not the LLM) turns units into money.
+    """
+    draft = DraftedReport(
+        work_completed="Replaced the damaged kitchen sink drain and tested for leaks.",
+        materials=[],
+        estimated_work_units=3,
+        confidence="low",
+    )
+
+    assert draft.estimated_work_units == 3
+    assert "amount_cents" not in DraftedReport.model_fields
+
+
+@pytest.mark.parametrize("units", [0, 1001])
+def test_estimated_work_units_is_bounded(units: int) -> None:
     with pytest.raises(ValidationError):
         DraftedReport(
             work_completed="Replaced the damaged kitchen sink drain and tested for leaks.",
             materials=[],
-            amount_cents=12_500,
+            estimated_work_units=units,
             confidence="low",
         )
 

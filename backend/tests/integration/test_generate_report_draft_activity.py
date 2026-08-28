@@ -74,7 +74,7 @@ async def _draft_with_fake(
                         "for leaks."
                     ),
                     materials=[],
-                    amount_cents=None,
+                    estimated_work_units=3,
                     confidence="low",
                 ),
                 prompt_tokens=18,
@@ -86,8 +86,8 @@ async def _draft_with_fake(
             "Replaced the damaged kitchen sink drain and tested the repair for leaks.",
             WorkflowState.REVIEW_PENDING,
             "succeeded",
-            None,
-            id="valid-low-confidence-draft",
+            1_500,
+            id="valid-low-confidence-draft-still-gets-a-suggested-amount",
         ),
         pytest.param(
             None,

@@ -19,6 +19,10 @@ from collections.abc import Awaitable, Callable
 from time import monotonic
 from uuid import UUID
 
+from jobact.contexts.reports.domain.pricing import (
+    SUGGESTED_AMOUNT_CURRENCY,
+    suggested_amount_cents,
+)
 from jobact.contexts.reports.domain.report import Material, Report
 from jobact.contexts.reports.infrastructure.report_repository import ReportRepository
 from jobact.shared.application.ports import AiConnector, Clock, IdGenerator
@@ -141,8 +145,8 @@ def _apply_draft(
             Material(id=id_generator.new_id(), label=material.label, qty=material.qty)
             for material in drafted.materials
         ],
-        amount_cents=drafted.amount_cents,
-        currency="RUB",
+        amount_cents=suggested_amount_cents(drafted.estimated_work_units),
+        currency=SUGGESTED_AMOUNT_CURRENCY,
         ai_confidence=drafted.confidence,
     )
 
@@ -151,6 +155,6 @@ def _template_fallback() -> DraftedReport:
     return DraftedReport(
         work_completed=_TEMPLATE_WORK_COMPLETED,
         materials=[],
-        amount_cents=None,
+        estimated_work_units=None,
         confidence="low",
     )

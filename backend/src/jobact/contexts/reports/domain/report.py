@@ -118,12 +118,19 @@ class Report(AggregateRoot):
         currency: str,
         ai_confidence: str,
     ) -> None:
+        """Apply one AI-drafted revision, including its suggested amount.
+
+        The amount is advisory only: this method never sets
+        `confirmed_by_user_at`/`amount_confirmed_at`, so
+        `mark_ready_for_signature()` still requires an explicit human
+        confirmation regardless of `ai_confidence` or the suggested amount.
+        """
         self._ensure_editable()
         revision = self.current_revision
         revision.source = "ai"
         revision.work_completed = work_completed
         revision.materials = list(materials)
-        revision.amount_cents = None if ai_confidence == "low" else amount_cents
+        revision.amount_cents = amount_cents
         revision.currency = currency
         revision.ai_confidence = ai_confidence
 

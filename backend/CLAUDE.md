@@ -97,6 +97,11 @@ the current revision has both `confirmed_by_user_at` and `amount_confirmed_at` s
 AI-proposed amount can never reach a signed document without an explicit human confirmation.
 Do not relax this for convenience — see ADR-0006 and the AI design doc for why.
 
+The drafting model itself never emits a price — it returns `estimated_work_units`, and
+`contexts/reports/domain/pricing.py` deterministically converts that into a suggested
+`amount_cents` at a fixed USD rate. Keep that arithmetic in application/domain code, not the
+prompt, so the pricing rule stays explicit, testable, and easy to change.
+
 ## Testing conventions
 
 - `tests/domain/`, `tests/application/`, `tests/workflow/` — no real Postgres/Redis/MinIO;

@@ -6,8 +6,11 @@ base_url`/`api_key`) -- the agent owns the actual HTTP call lifecycle
 and structured-output validation directly; `LlmGateway` only supplies
 credentials (see its own docstring in `shared/application/ports.py`).
 
-The agent's output is validated before it reaches the report aggregate.
-In particular, a low-confidence draft cannot carry a proposed amount.
+The agent's output is validated before it reaches the report aggregate. In
+particular, the model never emits a price: it returns a count of materially
+distinct work units, and turning that into a suggested amount is deterministic
+application logic (`contexts/reports/domain/pricing.py`), not something the
+LLM can compute or bypass.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from jobact.shared.application.ports import AiConnector
@@ -31,14 +34,8 @@ class DraftedMaterial(BaseModel):
 class DraftedReport(BaseModel):
     work_completed: str = Field(min_length=20, max_length=2000)
     materials: list[DraftedMaterial] = Field(default_factory=list, max_length=20)
-    amount_cents: int | None = Field(default=None, ge=0, le=10_000_000)
+    estimated_work_units: int | None = Field(default=None, ge=1, le=1000)
     confidence: Literal["high", "medium", "low"]
-
-    @model_validator(mode="after")
-    def low_confidence_cannot_propose_an_amount(self) -> DraftedReport:
-        if self.confidence == "low" and self.amount_cents is not None:
-            raise ValueError("Low-confidence drafts must leave amount_cents unset.")
-        return self
 
 
 @dataclass(frozen=True)
@@ -83,11 +80,16 @@ class LiteLlmCostCapture:
 _SYSTEM_PROMPT = (
     "You are drafting a field-service work report from a technician's rough "
     "notes. Extract: (1) a clear, customer-readable summary of the work "
-    "completed, (2) any materials/parts used with quantities, (3) the amount "
-    "to charge in cents, if the notes clearly state or strongly imply one -- "
-    "otherwise leave amount_cents unset. Set confidence to 'low' whenever "
-    "you are not confident about the amount specifically; never guess an "
-    "amount you are not confident about."
+    "completed, (2) any materials/parts used with quantities, (3) "
+    "estimated_work_units -- an integer count of the materially distinct "
+    "units of work volume the notes actually describe. One unit is one "
+    "discrete, materially distinct piece of work (e.g. one fixture "
+    "replaced, one leak sealed, one section serviced). Never count the same "
+    "work twice because it is mentioned more than once, and never count "
+    "work the notes do not describe. Never output a price, a currency, or "
+    "any monetary amount -- the application computes the price from your "
+    "unit count. Set confidence to reflect how well the notes support the "
+    "summary and the unit count."
 )
 
 
