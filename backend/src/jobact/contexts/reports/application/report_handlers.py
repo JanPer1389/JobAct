@@ -44,16 +44,24 @@ class ReportEvidenceIncompleteError(Exception):
 class CreatedReport:
     report: Report
     workflow_run_id: UUID
+    workflow_run: WorkflowRun
 
 
 class ManualRecoveryInput:
-    def __init__(self, *, raw_notes: str, stage: Literal["analysis", "pdf"]) -> None:
+    def __init__(
+        self,
+        *,
+        raw_notes: str | None,
+        stage: Literal["analysis", "transcription", "pdf"],
+    ) -> None:
         self.raw_notes = raw_notes
         self.stage = stage
 
 
 class CreateReportHandler:
-    def __init__(self, uow: UnitOfWork, clock: Clock, id_generator: IdGenerator) -> None:
+    def __init__(
+        self, uow: UnitOfWork, clock: Clock, id_generator: IdGenerator
+    ) -> None:
         self._uow = uow
         self._clock = clock
         self._id_generator = id_generator
@@ -64,9 +72,12 @@ class CreateReportHandler:
         organization_id: UUID,
         visit_id: UUID,
         created_by: UUID,
-        raw_notes: str,
+        raw_notes: str | None,
+        audio_media_asset_id: UUID | None = None,
         correlation_id: UUID | None = None,
     ) -> CreatedReport:
+        if (raw_notes is None) == (audio_media_asset_id is None):
+            raise ValueError("Exactly one report input source is required.")
         async with self._uow:
             visit = await VisitRepository(self._uow.session).get_by_id(visit_id)
             if visit is None or visit.organization_id != organization_id:
@@ -83,10 +94,24 @@ class CreateReportHandler:
                 attached_before_count=len(before),
                 attached_after_count=len(after),
             ).missing_requirements()
-            if not raw_notes.strip():
+            if raw_notes is not None and not raw_notes.strip():
                 missing.append("raw_notes")
             if missing:
                 raise ReportEvidenceIncompleteError(missing)
+
+            audio_asset = None
+            if audio_media_asset_id is not None:
+                audio_asset = await media_repo.get_by_id(audio_media_asset_id)
+                if (
+                    audio_asset is None
+                    or audio_asset.organization_id != organization_id
+                    or audio_asset.kind != "audio"
+                    or audio_asset.status != "attached"
+                    or audio_asset.visit_id != visit_id
+                ):
+                    raise AuthorizationError(
+                        "Audio media asset must be attached, visit-bound, and belong to this organization."
+                    )
 
             repo = ReportRepository(self._uow.session)
             now = self._clock.now()
@@ -104,14 +129,24 @@ class CreateReportHandler:
                 currency=currency,
             )
             await repo.add(report)
+            initial_state = (
+                WorkflowState.TRANSCRIPTION_PENDING
+                if audio_asset is not None
+                else WorkflowState.DRAFTING_PENDING
+            )
+            input_data = (
+                {"transcription": {"media_asset_id": str(audio_asset.id)}}
+                if audio_asset is not None
+                else {"drafting": {"raw_notes": raw_notes}}
+            )
             run = WorkflowRun.start(
                 id=self._id_generator.new_id(),
                 organization_id=organization_id,
                 workflow_type="report_fulfillment",
                 subject_id=report.id,
                 correlation_id=correlation_id or self._id_generator.new_id(),
-                initial_state=WorkflowState.DRAFTING_PENDING,
-                input_data={"drafting": {"raw_notes": raw_notes}},
+                initial_state=initial_state,
+                input_data=input_data,
             )
             # Enqueued as an outbox row in this same transaction, so the
             # job survives an API restart -- see WorkflowRun.request_dispatch.
@@ -119,7 +154,7 @@ class CreateReportHandler:
             await WorkflowRunRepository(self._uow.session).add(run)
             self._uow.register(report)
             self._uow.register(run)
-        return CreatedReport(report=report, workflow_run_id=run.id)
+        return CreatedReport(report=report, workflow_run_id=run.id, workflow_run=run)
 
 
 class GetReportHandler:
@@ -152,7 +187,9 @@ class GetReportManualRecoveryHandler:
                     f"Report {report_id} does not belong to organization {organization_id}."
                 )
 
-            run = await WorkflowRunRepository(self._uow.session).get_by_subject(report_id)
+            run = await WorkflowRunRepository(self._uow.session).get_by_subject(
+                report_id
+            )
             if (
                 run is None
                 or run.organization_id != organization_id
@@ -162,6 +199,12 @@ class GetReportManualRecoveryHandler:
                 raise AuthorizationError(
                     f"Manual recovery is unavailable for report {report_id}."
                 )
+
+            transcription_input = run.input_data.get("transcription")
+            if isinstance(transcription_input, dict) and isinstance(
+                transcription_input.get("media_asset_id"), str
+            ):
+                return ManualRecoveryInput(raw_notes=None, stage="transcription")
 
             drafting_input = run.input_data.get("drafting")
             raw_notes = (
@@ -173,7 +216,7 @@ class GetReportManualRecoveryHandler:
                 raise AuthorizationError(
                     f"Manual recovery is unavailable for report {report_id}."
                 )
-            stage: Literal["analysis", "pdf"] = (
+            stage: Literal["analysis", "transcription", "pdf"] = (
                 "pdf" if report.status == "signed" else "analysis"
             )
 
@@ -281,7 +324,9 @@ class ReadyForSignatureHandler:
 
 
 class SignReportHandler:
-    def __init__(self, uow: UnitOfWork, clock: Clock, id_generator: IdGenerator) -> None:
+    def __init__(
+        self, uow: UnitOfWork, clock: Clock, id_generator: IdGenerator
+    ) -> None:
         self._uow = uow
         self._clock = clock
         self._id_generator = id_generator
@@ -366,7 +411,11 @@ class RetryReportWorkflowHandler:
                 raise ReportStateError("This report's workflow has nothing to retry.")
 
             if report.status == "draft":
-                target = WorkflowState.DRAFTING_PENDING
+                target = (
+                    WorkflowState.TRANSCRIPTION_PENDING
+                    if isinstance(run.input_data.get("transcription"), dict)
+                    else WorkflowState.DRAFTING_PENDING
+                )
             elif report.status == "signed":
                 target = WorkflowState.PDF_PENDING
             else:

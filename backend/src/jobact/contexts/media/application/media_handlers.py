@@ -6,12 +6,19 @@ from jobact.contexts.media.domain.media_asset import MediaAsset, MediaVerificati
 from jobact.contexts.media.infrastructure.media_asset_repository import (
     MediaAssetRepository,
 )
+from jobact.contexts.visits.infrastructure.visit_repository import VisitRepository
 from jobact.shared.application.authorization import AuthorizationError
 from jobact.shared.application.ports import Clock, IdGenerator, ObjectStorage
 from jobact.shared.application.uow import UnitOfWork
 
 UPLOAD_TTL_SECONDS = 15 * 60
 DOWNLOAD_TTL_SECONDS = 15 * 60
+MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024
+SUPPORTED_AUDIO_CONTENT_TYPES = frozenset({"audio/webm", "audio/mp4"})
+
+
+class MediaUploadValidationError(Exception):
+    pass
 
 
 class RequestMediaUploadHandler:
@@ -39,6 +46,30 @@ class RequestMediaUploadHandler:
         visit_id: UUID | None,
         report_id: UUID | None,
     ) -> tuple[MediaAsset, str]:
+        if kind == "audio":
+            if content_type not in SUPPORTED_AUDIO_CONTENT_TYPES:
+                raise MediaUploadValidationError(
+                    "Audio uploads must use audio/webm or audio/mp4."
+                )
+            if byte_size > MAX_AUDIO_UPLOAD_BYTES:
+                raise MediaUploadValidationError(
+                    "Audio uploads must not exceed 25 MiB."
+                )
+            if visit_id is None:
+                raise MediaUploadValidationError(
+                    "Audio uploads must be associated with a visit."
+                )
+            if phase is not None or report_id is not None:
+                raise MediaUploadValidationError(
+                    "Audio uploads cannot have a phase or report association."
+                )
+            async with self._uow:
+                visit = await VisitRepository(self._uow.session).get_by_id(visit_id)
+            if visit is None or visit.organization_id != organization_id:
+                raise AuthorizationError(
+                    f"Visit {visit_id} does not belong to organization {organization_id}."
+                )
+
         asset_id = self._id_generator.new_id()
         storage_key = f"{organization_id}/{asset_id}"
         asset = MediaAsset(

@@ -32,6 +32,7 @@ from jobact.contracts.http.v1.reports import (
     ReportResponse,
     ReportRevisionResponse,
     SignReportRequest,
+    TranscriptionResponse,
     UpdateReportRevisionRequest,
     WorkflowErrorResponse,
 )
@@ -41,6 +42,7 @@ from jobact.shared.infrastructure.id_generator import UuidIdGenerator
 from jobact.shared.infrastructure.postgres.uow import SqlAlchemyUnitOfWork
 from jobact.workflows.report_fulfillment.failures import failure_from_code
 from jobact.workflows.report_fulfillment.repository import WorkflowRunRepository
+from jobact.workflows.report_fulfillment.run import WorkflowRun
 from jobact.workflows.report_fulfillment.states import WorkflowState
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -53,6 +55,7 @@ def _to_response(
     workflow_state: WorkflowState | None = None,
     pdf_media_asset_id: UUID | None = None,
     workflow_error: WorkflowErrorResponse | None = None,
+    transcription: TranscriptionResponse | None = None,
 ) -> ReportResponse:
     revision = report.current_revision
     return ReportResponse(
@@ -86,15 +89,53 @@ def _to_response(
         workflow_state=workflow_state,
         workflow_error=workflow_error,
         pdf_media_asset_id=pdf_media_asset_id,
+        transcription=transcription,
+    )
+
+
+def transcription_from_workflow(
+    run: WorkflowRun | None,
+) -> TranscriptionResponse | None:
+    if run is None:
+        return None
+    transcription = run.input_data.get("transcription")
+    if not isinstance(transcription, dict):
+        return None
+    media_asset_id = transcription.get("media_asset_id")
+    if not isinstance(media_asset_id, str):
+        return None
+    try:
+        parsed_media_asset_id = UUID(media_asset_id)
+    except ValueError:
+        return None
+
+    transcript = transcription.get("transcript")
+    detected_language = transcription.get("detected_language")
+    if run.state in {WorkflowState.MANUAL_INPUT_REQUIRED, WorkflowState.FAILED}:
+        status = "failed"
+    elif run.state == WorkflowState.TRANSCRIPTION_PENDING:
+        status = "running" if run.claimed_at is not None else "queued"
+    elif isinstance(transcript, str):
+        status = "completed"
+    else:
+        status = "failed"
+
+    return TranscriptionResponse(
+        status=status,
+        media_asset_id=parsed_media_asset_id,
+        transcript=transcript if isinstance(transcript, str) else None,
+        detected_language=(
+            detected_language if isinstance(detected_language, str) else None
+        ),
     )
 
 
 async def _to_enriched_response(report: Report) -> ReportResponse:
     async with SqlAlchemyUnitOfWork() as uow:
         run = await WorkflowRunRepository(uow.session).get_by_subject(report.id)
-        pdf_asset = await MediaAssetRepository(
-            uow.session
-        ).get_attached_pdf_by_report(report.id)
+        pdf_asset = await MediaAssetRepository(uow.session).get_attached_pdf_by_report(
+            report.id
+        )
     failure = failure_from_code(run.last_error if run is not None else None)
     return _to_response(
         report,
@@ -110,6 +151,7 @@ async def _to_enriched_response(report: Report) -> ReportResponse:
             else None
         ),
         pdf_media_asset_id=pdf_asset.id if pdf_asset is not None else None,
+        transcription=transcription_from_workflow(run),
     )
 
 
@@ -128,6 +170,7 @@ async def create_report(
         visit_id=body.visit_id,
         created_by=principal.user_id,
         raw_notes=body.raw_notes,
+        audio_media_asset_id=body.audio_media_asset_id,
         correlation_id=correlation_id,
     )
     logger.info(
@@ -136,7 +179,7 @@ async def create_report(
         created.report.id,
         created.workflow_run_id,
         principal.organization_id,
-        WorkflowState.DRAFTING_PENDING.value,
+        created.workflow_run.state.value,
         correlation_id,
     )
     # The dispatch request committed to the outbox in the same transaction
@@ -148,7 +191,9 @@ async def create_report(
         correlation_id,
     )
     return _to_response(
-        created.report, workflow_state=WorkflowState.DRAFTING_PENDING
+        created.report,
+        workflow_state=created.workflow_run.state,
+        transcription=transcription_from_workflow(created.workflow_run),
     )
 
 
@@ -158,7 +203,7 @@ async def list_reports(
 ) -> list[ReportResponse]:
     handler = ListReportsHandler(uow=SqlAlchemyUnitOfWork())
     reports = await handler.handle(organization_id=principal.organization_id)
-    return [_to_response(r) for r in reports]
+    return [await _to_enriched_response(report) for report in reports]
 
 
 @router.get("/{report_id}", response_model=ReportResponse)

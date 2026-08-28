@@ -124,6 +124,35 @@ async def test_media_asset_can_be_created_and_linked_to_an_existing_visit(
 
 
 @pytest.mark.asyncio
+async def test_audio_upload_requires_a_visit_owned_by_the_requesting_tenant(
+    clean_media_assets,
+):
+    owner_org_id = uuid4()
+    foreign_org_id = uuid4()
+    visit_id = uuid4()
+    await _insert_visit(visit_id, owner_org_id)
+
+    handler = RequestMediaUploadHandler(
+        uow=SqlAlchemyUnitOfWork(),
+        object_storage=FakeObjectStorage(),
+        clock=FakeClock(),
+        id_generator=FakeIdGenerator(),
+    )
+
+    with pytest.raises(AuthorizationError):
+        await handler.handle(
+            organization_id=foreign_org_id,
+            content_type="audio/webm",
+            byte_size=1024,
+            sha256="a" * 64,
+            kind="audio",
+            phase=None,
+            visit_id=visit_id,
+            report_id=None,
+        )
+
+
+@pytest.mark.asyncio
 async def test_deleting_a_visit_with_linked_media_is_blocked(clean_media_assets):
     organization_id = uuid4()
     visit_id = uuid4()

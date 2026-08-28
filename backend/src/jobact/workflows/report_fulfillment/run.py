@@ -97,6 +97,7 @@ class WorkflowRun(AggregateRoot):
         self.attempt = 0
         self.next_retry_at = None
         self.last_error = None
+        self.claimed_at = None
         self.state_version += 1
 
     def claim_attempt(self, *, now: datetime) -> None:

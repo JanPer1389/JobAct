@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from jobact.apps.api.middleware.correlation import get_correlation_id
 from jobact.apps.api.routers.auth import LogoutCacheDeleteFailedError
+from jobact.contexts.media.application.media_handlers import MediaUploadValidationError
 from jobact.contexts.media.domain.media_asset import MediaVerificationError
 from jobact.contexts.reports.application.report_handlers import (
     ReportEvidenceIncompleteError,
@@ -50,14 +51,28 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(VisualAuditValidationError)
-    async def _handle_visual_audit_validation(request: Request, exc: VisualAuditValidationError) -> JSONResponse:
-        envelope = ErrorEnvelope(type="visual-audit-validation", title="Unprocessable Entity", status=422, detail=str(exc), correlation_id=str(get_correlation_id(request)))
+    async def _handle_visual_audit_validation(
+        request: Request, exc: VisualAuditValidationError
+    ) -> JSONResponse:
+        envelope = ErrorEnvelope(
+            type="visual-audit-validation",
+            title="Unprocessable Entity",
+            status=422,
+            detail=str(exc),
+            correlation_id=str(get_correlation_id(request)),
+        )
         return JSONResponse(status_code=422, content=envelope.model_dump())
 
     @app.exception_handler(VisualAuditStateError)
     @app.exception_handler(ReportStateError)
     async def _handle_state_conflict(request: Request, exc: Exception) -> JSONResponse:
-        envelope = ErrorEnvelope(type="state-conflict", title="Conflict", status=409, detail=str(exc), correlation_id=str(get_correlation_id(request)))
+        envelope = ErrorEnvelope(
+            type="state-conflict",
+            title="Conflict",
+            status=409,
+            detail=str(exc),
+            correlation_id=str(get_correlation_id(request)),
+        )
         return JSONResponse(status_code=409, content=envelope.model_dump())
 
     @app.exception_handler(MediaVerificationError)
@@ -66,6 +81,22 @@ def register_error_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         envelope = ErrorEnvelope(
             type="media-verification-failed",
+            title="Unprocessable Entity",
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+            correlation_id=str(get_correlation_id(request)),
+        )
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=envelope.model_dump(),
+        )
+
+    @app.exception_handler(MediaUploadValidationError)
+    async def _handle_media_upload_validation_error(
+        request: Request, exc: MediaUploadValidationError
+    ) -> JSONResponse:
+        envelope = ErrorEnvelope(
+            type="media-upload-validation",
             title="Unprocessable Entity",
             status=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),

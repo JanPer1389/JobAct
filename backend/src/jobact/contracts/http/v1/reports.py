@@ -4,14 +4,29 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, model_validator
 
 from jobact.contracts.http.v1.visual_audits import VisualAuditResult
 
 
 class CreateReportRequest(BaseModel):
     visit_id: UUID
-    raw_notes: str = Field(min_length=20)
+    raw_notes: str | None = None
+    audio_media_asset_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_input_source(self) -> CreateReportRequest:
+        if (self.raw_notes is None) == (self.audio_media_asset_id is None):
+            raise ValueError(
+                "Exactly one of raw_notes or audio_media_asset_id is required."
+            )
+        if self.raw_notes is not None:
+            self.raw_notes = self.raw_notes.strip()
+            if len(self.raw_notes) < 20:
+                raise ValueError(
+                    "raw_notes must contain at least 20 non-whitespace characters."
+                )
+        return self
 
 
 class MaterialDto(BaseModel):
@@ -54,6 +69,13 @@ class WorkflowErrorResponse(BaseModel):
     retryable: bool
 
 
+class TranscriptionResponse(BaseModel):
+    status: Literal["queued", "running", "completed", "failed"]
+    media_asset_id: UUID
+    transcript: str | None = None
+    detected_language: str | None = None
+
+
 class ReportResponse(BaseModel):
     id: UUID
     human_id: str
@@ -65,6 +87,7 @@ class ReportResponse(BaseModel):
     workflow_state: str | None = None
     workflow_error: WorkflowErrorResponse | None = None
     pdf_media_asset_id: UUID | None = None
+    transcription: TranscriptionResponse | None = None
 
 
 class ManualRecoveryResponse(BaseModel):
@@ -74,5 +97,5 @@ class ManualRecoveryResponse(BaseModel):
     offer the right recovery actions.
     """
 
-    raw_notes: str
-    stage: Literal["analysis", "pdf"] = "analysis"
+    raw_notes: str | None = None
+    stage: Literal["analysis", "transcription", "pdf"] = "analysis"
