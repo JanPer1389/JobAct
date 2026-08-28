@@ -13,7 +13,17 @@ now that there are 9 tables across 2 schemas -- keeps each file scoped to
 one schema.
 """
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, MetaData, Table, Text
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    MetaData,
+    SmallInteger,
+    Table,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 
 metadata = MetaData()
@@ -98,5 +108,18 @@ sessions_table = Table(
     Column("revoked_at", DateTime(timezone=True), nullable=True),
     Column("ip", Text, nullable=True),
     Column("user_agent", Text, nullable=True),
+    schema="identity",
+)
+
+local_credentials_table = Table(
+    "local_credentials",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("user_id", UUID(as_uuid=True), ForeignKey("identity.users.id"), nullable=False),
+    Column("password_hash", Text, nullable=False),
+    Column("hash_version", SmallInteger, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("user_id", name="uq_local_credentials_user_id"),
     schema="identity",
 )

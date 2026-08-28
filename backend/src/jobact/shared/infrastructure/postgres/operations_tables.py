@@ -63,7 +63,16 @@ media_assets_table = Table(
     Column("kind", String, nullable=False),
     Column("phase", String, nullable=True),
     Column("status", String, nullable=False),
-    Column("visit_id", UUID(as_uuid=True), nullable=True),
+    Column(
+        "visit_id",
+        UUID(as_uuid=True),
+        ForeignKey(
+            "operations.visits.id",
+            name="fk_media_assets_visit_id_visits",
+            ondelete="NO ACTION",
+        ),
+        nullable=True,
+    ),
     Column("report_id", UUID(as_uuid=True), nullable=True),
     Column("captured_at", DateTime(timezone=True), nullable=True),
     Column("uploaded_at", DateTime(timezone=True), nullable=True),
@@ -100,6 +109,8 @@ report_revisions_table = Table(
     Column("confirmed_by_user_at", DateTime(timezone=True), nullable=True),
     Column("amount_confirmed_at", DateTime(timezone=True), nullable=True),
     Column("frozen_at", DateTime(timezone=True), nullable=True),
+    Column("visual_comparison_status", String, nullable=True),
+    Column("visual_comparison", JSONB, nullable=True),
     schema="operations",
 )
 

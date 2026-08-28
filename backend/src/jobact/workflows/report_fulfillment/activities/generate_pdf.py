@@ -1,7 +1,17 @@
-"""Finalize a signed report as an attached PDF and complete its workflow."""
+"""Finalize a signed report as an attached PDF and complete its workflow.
+
+Runs on the durable worker, so a failure here must land the run in an
+explicit terminal state: without that, an exception would leave the run
+in `PDF_PENDING` forever (the worker's own retry loop stops acking the
+message but never touches run state). The report itself stays signed --
+only rendering failed -- so the recovery action is a retry, not a manual
+re-edit.
+"""
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from uuid import UUID
 
 from jobact.contexts.customers.infrastructure.customer_repository import (
@@ -21,8 +31,13 @@ from jobact.shared.application.ports import (
 )
 from jobact.shared.application.uow import UnitOfWork
 from jobact.workflows.report_fulfillment.repository import WorkflowRunRepository
+from jobact.workflows.report_fulfillment.runner import sanitize_error
 from jobact.workflows.report_fulfillment.states import WorkflowState
 from jobact.workflows.report_fulfillment.step_repository import WorkflowStepRepository
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_RENDER_TIMEOUT_SECONDS = 15.0
 
 
 class GeneratePdfActivity:
@@ -33,15 +48,63 @@ class GeneratePdfActivity:
         pdf_renderer: PdfRenderer,
         clock: Clock,
         id_generator: IdGenerator,
+        render_timeout_seconds: float = _DEFAULT_RENDER_TIMEOUT_SECONDS,
     ) -> None:
         self._uow = uow
         self._object_storage = object_storage
         self._pdf_renderer = pdf_renderer
         self._clock = clock
         self._id_generator = id_generator
+        self._render_timeout_seconds = render_timeout_seconds
 
     async def run(self, *, report_id: UUID, run_id: UUID) -> None:
         started_at = self._clock.now()
+        try:
+            await self._generate(report_id=report_id, run_id=run_id, started_at=started_at)
+        except Exception as exc:  # noqa: BLE001 -- storage/render details
+            # must not leak; the run must reach a terminal state either way.
+            await self._park(
+                report_id=report_id,
+                run_id=run_id,
+                started_at=started_at,
+                error_detail=sanitize_error(exc).detail,
+                error_type=type(exc).__name__,
+            )
+
+    async def _park(
+        self, *, report_id: UUID, run_id: UUID, started_at, error_detail: str, error_type: str
+    ) -> None:
+        async with self._uow:
+            run_repo = WorkflowRunRepository(self._uow.session)
+            run = await run_repo.get_by_id(run_id)
+            if run is None or run.subject_id != report_id:
+                return
+            if run.state != WorkflowState.PDF_PENDING:
+                return
+            expected_version = run.state_version
+            run.record_failure(error=error_detail, now=started_at, max_attempts=1)
+            await run_repo.save(run, expected_version=expected_version)
+            await WorkflowStepRepository(self._uow.session).record(
+                id=self._id_generator.new_id(),
+                run_id=run.id,
+                step="generate_pdf",
+                status="failed",
+                attempt=run.attempt,
+                input_data=None,
+                output_data=None,
+                error=error_detail,
+                started_at=started_at,
+                finished_at=self._clock.now(),
+            )
+            self._uow.register(run)
+        logger.warning(
+            "report_workflow_manual_input_required report_id=%s run_id=%s error_type=%s",
+            report_id,
+            run_id,
+            error_type,
+        )
+
+    async def _generate(self, *, report_id: UUID, run_id: UUID, started_at) -> None:
         async with self._uow:
             report_repo = ReportRepository(self._uow.session)
             report = await report_repo.get_by_id(report_id)
@@ -83,8 +146,13 @@ class GeneratePdfActivity:
                 raise ValueError("A signed report requires an attached PNG signature asset.")
 
             signature_png = await self._object_storage.download(signature_asset.storage_key)
-            pdf_bytes = await self._pdf_renderer.render(
-                _pdf_context(report, visit, customer, signature.signer_name, signature_png)
+            pdf_bytes = await asyncio.wait_for(
+                self._pdf_renderer.render(
+                    _pdf_context(
+                        report, visit, customer, signature.signer_name, signature_png
+                    )
+                ),
+                timeout=self._render_timeout_seconds,
             )
             asset_id = self._id_generator.new_id()
             storage_key = f"{report.organization_id}/{asset_id}.pdf"
@@ -140,6 +208,14 @@ class GeneratePdfActivity:
             self._uow.register(report)
             self._uow.register(pdf_asset)
             self._uow.register(run)
+        logger.info(
+            "report_workflow_completed report_id=%s run_id=%s pdf_media_asset_id=%s "
+            "correlation_id=%s",
+            report_id,
+            run_id,
+            pdf_asset.id,
+            run.correlation_id,
+        )
 
 
 def _pdf_context(report, visit, customer, signer_name: str, signature_png: bytes) -> dict:

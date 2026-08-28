@@ -19,6 +19,7 @@ from typing import Any
 from uuid import UUID
 
 from jobact.shared.domain.aggregate import AggregateRoot
+from jobact.workflows.report_fulfillment.events import WorkflowStepDispatchRequested
 from jobact.workflows.report_fulfillment.states import (
     ALLOWED_TRANSITIONS,
     WorkflowState,
@@ -44,6 +45,7 @@ class WorkflowRun(AggregateRoot):
         state_version: int,
         correlation_id: UUID,
         input_data: dict[str, Any],
+        claimed_at: datetime | None = None,
     ) -> None:
         super().__init__()
         self.id = id
@@ -57,6 +59,7 @@ class WorkflowRun(AggregateRoot):
         self.state_version = state_version
         self.correlation_id = correlation_id
         self.input_data = input_data
+        self.claimed_at = claimed_at
 
     @classmethod
     def start(
@@ -96,17 +99,72 @@ class WorkflowRun(AggregateRoot):
         self.last_error = None
         self.state_version += 1
 
-    def resume_manual_review(self) -> None:
-        """Resume a drafting failure after a human supplies the report revision."""
-        if self.state != WorkflowState.MANUAL_INPUT_REQUIRED:
-            raise InvalidWorkflowTransitionError(
-                f"Cannot resume manual review from {self.state}."
+    def claim_attempt(self, *, now: datetime) -> None:
+        """Claim exclusive execution of the current pending step.
+
+        Sets `claimed_at` and bumps `state_version`, without changing
+        `state`/`attempt`/`last_error`. `state` alone can't mark "already
+        being worked on" because the run only leaves its pending state once
+        the external call (e.g. an AI provider request) finishes -- exactly
+        the window this claim protects. Callers must check `claimed_at is
+        not None` themselves before claiming (this method does not
+        re-check it) and must treat a `WorkflowConcurrencyError` from the
+        repository's compare-and-swap save() as "someone else already
+        claimed this," not as an error to propagate -- a concurrent or
+        duplicate dispatch of the same pending step (at-least-once
+        delivery) must not re-run the external call.
+        """
+        self.claimed_at = now
+        self.state_version += 1
+
+    def request_dispatch(self) -> None:
+        """Ask for the current state's step to be executed asynchronously.
+
+        Call once, right after `start()` or a `transition_to()` that
+        moves the run into a pending state a worker must act on.
+        """
+        self._record_event(
+            WorkflowStepDispatchRequested(
+                aggregate_id=self.id,
+                organization_id=self.organization_id,
+                workflow_type=self.workflow_type,
+                subject_id=self.subject_id,
+                state=self.state.value,
             )
-        self.state = WorkflowState.REVIEW_PENDING
+        )
+
+    def resume_to(self, target_state: WorkflowState) -> None:
+        """Resume a parked or explicitly failed run into `target_state`.
+
+        Resuming is deliberately outside `ALLOWED_TRANSITIONS`:
+        `MANUAL_INPUT_REQUIRED` is terminal for the workflow itself, and
+        leaving it is an explicit human-initiated act (a manual edit, or
+        a retry), not a normal forward transition.
+        """
+        if self.state not in {
+            WorkflowState.MANUAL_INPUT_REQUIRED,
+            WorkflowState.FAILED,
+        }:
+            raise InvalidWorkflowTransitionError(f"Cannot resume from {self.state}.")
+        self.state = target_state
         self.attempt = 0
         self.next_retry_at = None
         self.last_error = None
+        self.claimed_at = None
         self.state_version += 1
+
+    def fail(self, *, code: str, now: datetime) -> None:
+        """Finish an asynchronous step with a safe, client-visible error code."""
+        del now  # Kept in the command signature for consistent domain audit semantics.
+        self.state = WorkflowState.FAILED
+        self.attempt += 1
+        self.next_retry_at = None
+        self.last_error = code
+        self.state_version += 1
+
+    def resume_manual_review(self) -> None:
+        """Resume a drafting failure after a human supplies the report revision."""
+        self.resume_to(WorkflowState.REVIEW_PENDING)
 
     def record_step_success(self) -> None:
         """Clears retry/error bookkeeping after a step succeeds, without

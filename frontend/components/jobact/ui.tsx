@@ -149,9 +149,11 @@ interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string
   icon?: LucideIcon
   hint?: string
+  error?: string
 }
 
-export function Input({ label, icon: Icon, hint, className, id, ...props }: FieldProps) {
+export function Input({ label, icon: Icon, hint, error, className, id, ...props }: FieldProps) {
+  const descriptionId = id ? `${id}-description` : undefined
   return (
     <label htmlFor={id} className="block">
       {label && (
@@ -165,15 +167,28 @@ export function Input({ label, icon: Icon, hint, className, id, ...props }: Fiel
         )}
         <input
           id={id}
+          aria-invalid={Boolean(error)}
+          aria-describedby={hint || error ? descriptionId : undefined}
           className={cn(
             "h-12 w-full rounded-xl border border-input bg-card px-4 text-[15px] text-foreground placeholder:text-muted-foreground/70 transition-colors focus:border-ring focus:outline-none",
             Icon && "pl-10",
+            error && "border-destructive focus:border-destructive",
             className,
           )}
           {...props}
         />
       </span>
-      {hint && <span className="mt-1.5 block text-xs text-muted-foreground">{hint}</span>}
+      {(error || hint) && (
+        <span
+          id={descriptionId}
+          className={cn(
+            "mt-1.5 block text-xs",
+            error ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {error ?? hint}
+        </span>
+      )}
     </label>
   )
 }

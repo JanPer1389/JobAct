@@ -22,6 +22,7 @@ it behave exactly as before.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from dataclasses import dataclass
@@ -29,7 +30,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import insert, select
+from sqlalchemy import delete, select, update
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -44,12 +46,21 @@ _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # idempotency-key conventions (e.g. Stripe's). Enforcing/purging expired
 # keys is out of scope for this task -- this only records the value.
 _KEY_TTL = timedelta(hours=24)
+_ANONYMOUS_SCOPE = UUID(int=0)
+_REPLAY_WAIT_SECONDS = 10.0
+_REPLAY_POLL_SECONDS = 0.02
 
 _CONFLICT_BODY = {
     "type": "idempotency-key-conflict",
     "title": "Conflict",
     "status": 409,
     "detail": "This Idempotency-Key was already used with a different request body.",
+}
+_IN_PROGRESS_BODY = {
+    "type": "idempotency-request-in-progress",
+    "title": "Request in progress",
+    "status": 409,
+    "detail": "An identical request is still being processed. Retry shortly.",
 }
 
 
@@ -71,13 +82,10 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         if not idempotency_key:
             return await call_next(request)
 
-        # Resolving the caller's organization is this middleware's only
-        # use for the principal -- an unauthenticated mutating request is
-        # rejected by the route's own `get_current_principal` dependency
-        # regardless, so pass through rather than raising here.
         principal = await try_resolve_principal(request)
-        if principal is None:
-            return await call_next(request)
+        organization_id = (
+            principal.organization_id if principal is not None else _ANONYMOUS_SCOPE
+        )
 
         # Starlette caches the body after the first `.body()` read, so
         # downstream route handlers (which may call `.json()`/`.body()`
@@ -85,15 +93,32 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         request_body = await request.body()
         request_hash = _compute_request_hash(
             endpoint=request.url.path,
-            organization_id=principal.organization_id,
+            organization_id=organization_id,
             body=request_body,
         )
 
-        existing = await _get_idempotency_record(idempotency_key, principal.organization_id)
-        if existing is not None:
-            return _replay_or_conflict(existing, request_hash)
+        claimed = await _claim_idempotency_key(
+            key=idempotency_key,
+            organization_id=organization_id,
+            endpoint=request.url.path,
+            request_hash=request_hash,
+        )
+        if not claimed:
+            return await _wait_for_replay_or_conflict(
+                key=idempotency_key,
+                organization_id=organization_id,
+                request_hash=request_hash,
+            )
 
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            await _release_idempotency_claim(
+                key=idempotency_key,
+                organization_id=organization_id,
+                request_hash=request_hash,
+            )
+            raise
         # `call_next` is typed as returning the public `Response`, but at
         # runtime `BaseHTTPMiddleware` always hands back its internal
         # `_StreamingResponse`, which does carry `body_iterator` -- mypy
@@ -115,10 +140,9 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
 
         parsed_ok, parsed_body = _parse_response_body(response_body_bytes)
         if parsed_ok:
-            await _store_idempotency_record(
+            await _complete_idempotency_record(
                 key=idempotency_key,
-                organization_id=principal.organization_id,
-                endpoint=request.url.path,
+                organization_id=organization_id,
                 request_hash=request_hash,
                 response_status=response.status_code,
                 response_body=parsed_body,
@@ -139,6 +163,9 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
 def _replay_or_conflict(existing: _IdempotencyRecord, request_hash: str) -> Response:
     if existing.request_hash != request_hash:
         return JSONResponse(status_code=409, content=_CONFLICT_BODY)
+
+    if existing.response_status is None:
+        return JSONResponse(status_code=409, content=_IN_PROGRESS_BODY)
 
     if existing.response_body is None:
         # Covers e.g. a stored 204 No Content -- returning a JSONResponse
@@ -193,27 +220,78 @@ async def _get_idempotency_record(key: str, organization_id: UUID) -> _Idempoten
     )
 
 
-async def _store_idempotency_record(
+async def _claim_idempotency_key(
     *,
     key: str,
     organization_id: UUID,
     endpoint: str,
     request_hash: str,
-    response_status: int,
-    response_body: Any,
-) -> None:
+) -> bool:
     now = datetime.now(UTC)
     session_factory = get_sessionmaker()
     async with session_factory() as session, session.begin():
-        await session.execute(
-            insert(idempotency_keys_table).values(
+        result = await session.execute(
+            postgres_insert(idempotency_keys_table).values(
                 key=key,
                 organization_id=organization_id,
                 endpoint=endpoint,
                 request_hash=request_hash,
-                response_status=response_status,
-                response_body=response_body,
+                response_status=None,
+                response_body=None,
                 created_at=now,
                 expires_at=now + _KEY_TTL,
+            ).on_conflict_do_nothing(
+                index_elements=["key", "organization_id"]
+            ).returning(idempotency_keys_table.c.key)
+        )
+    return result.scalar_one_or_none() is not None
+
+
+async def _complete_idempotency_record(
+    *,
+    key: str,
+    organization_id: UUID,
+    request_hash: str,
+    response_status: int,
+    response_body: Any,
+) -> None:
+    session_factory = get_sessionmaker()
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            update(idempotency_keys_table)
+            .where(
+                idempotency_keys_table.c.key == key,
+                idempotency_keys_table.c.organization_id == organization_id,
+                idempotency_keys_table.c.request_hash == request_hash,
+            )
+            .values(response_status=response_status, response_body=response_body)
+        )
+
+
+async def _release_idempotency_claim(
+    *, key: str, organization_id: UUID, request_hash: str
+) -> None:
+    session_factory = get_sessionmaker()
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            delete(idempotency_keys_table).where(
+                idempotency_keys_table.c.key == key,
+                idempotency_keys_table.c.organization_id == organization_id,
+                idempotency_keys_table.c.request_hash == request_hash,
+                idempotency_keys_table.c.response_status.is_(None),
             )
         )
+
+
+async def _wait_for_replay_or_conflict(
+    *, key: str, organization_id: UUID, request_hash: str
+) -> Response:
+    deadline = asyncio.get_running_loop().time() + _REPLAY_WAIT_SECONDS
+    while asyncio.get_running_loop().time() < deadline:
+        existing = await _get_idempotency_record(key, organization_id)
+        if existing is None:
+            return JSONResponse(status_code=409, content=_IN_PROGRESS_BODY)
+        if existing.request_hash != request_hash or existing.response_status is not None:
+            return _replay_or_conflict(existing, request_hash)
+        await asyncio.sleep(_REPLAY_POLL_SECONDS)
+    return JSONResponse(status_code=409, content=_IN_PROGRESS_BODY)

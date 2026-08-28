@@ -11,18 +11,16 @@ authoritative request input without adding it to the report revision.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Literal
 from uuid import UUID
 
 from jobact.contexts.media.infrastructure.media_asset_repository import (
     MediaAssetRepository,
 )
-from jobact.contexts.reports.domain.report import Material, Report
+from jobact.contexts.reports.domain.report import Material, Report, ReportStateError
 from jobact.contexts.reports.infrastructure.report_repository import ReportRepository
 from jobact.contexts.visits.infrastructure.visit_repository import VisitRepository
-from jobact.contexts.visual_audits.domain.visual_audit import VisualAuditStateError
-from jobact.contexts.visual_audits.infrastructure.visual_audit_repository import (
-    VisualAuditRepository,
-)
 from jobact.shared.application.authorization import AuthorizationError
 from jobact.shared.application.ports import Clock, IdGenerator
 from jobact.shared.application.uow import UnitOfWork
@@ -31,9 +29,26 @@ from jobact.workflows.report_fulfillment.run import WorkflowRun
 from jobact.workflows.report_fulfillment.states import WorkflowState
 
 
+class ReportEvidenceIncompleteError(Exception):
+    """A visit lacks the evidence AI analysis requires."""
+
+    def __init__(self, missing: list[str]) -> None:
+        super().__init__(
+            "This visit is missing required evidence before analysis can start."
+        )
+        self.missing = missing
+
+
+@dataclass(frozen=True)
+class CreatedReport:
+    report: Report
+    workflow_run_id: UUID
+
+
 class ManualRecoveryInput:
-    def __init__(self, *, raw_notes: str) -> None:
+    def __init__(self, *, raw_notes: str, stage: Literal["analysis", "pdf"]) -> None:
         self.raw_notes = raw_notes
+        self.stage = stage
 
 
 class CreateReportHandler:
@@ -49,13 +64,28 @@ class CreateReportHandler:
         visit_id: UUID,
         created_by: UUID,
         raw_notes: str,
-    ) -> Report:
+        correlation_id: UUID | None = None,
+    ) -> CreatedReport:
         async with self._uow:
             visit = await VisitRepository(self._uow.session).get_by_id(visit_id)
             if visit is None or visit.organization_id != organization_id:
                 raise AuthorizationError(
                     f"Visit {visit_id} does not belong to organization {organization_id}."
                 )
+
+            media_repo = MediaAssetRepository(self._uow.session)
+            before = await media_repo.list_attached_by_visit_and_phase(
+                visit_id, "before"
+            )
+            after = await media_repo.list_attached_by_visit_and_phase(visit_id, "after")
+            missing = visit.evidence_readiness(
+                attached_before_count=len(before),
+                attached_after_count=len(after),
+            ).missing_requirements()
+            if not raw_notes.strip():
+                missing.append("raw_notes")
+            if missing:
+                raise ReportEvidenceIncompleteError(missing)
 
             repo = ReportRepository(self._uow.session)
             now = self._clock.now()
@@ -75,14 +105,17 @@ class CreateReportHandler:
                 organization_id=organization_id,
                 workflow_type="report_fulfillment",
                 subject_id=report.id,
-                correlation_id=self._id_generator.new_id(),
+                correlation_id=correlation_id or self._id_generator.new_id(),
                 initial_state=WorkflowState.DRAFTING_PENDING,
                 input_data={"drafting": {"raw_notes": raw_notes}},
             )
+            # Enqueued as an outbox row in this same transaction, so the
+            # job survives an API restart -- see WorkflowRun.request_dispatch.
+            run.request_dispatch()
             await WorkflowRunRepository(self._uow.session).add(run)
             self._uow.register(report)
             self._uow.register(run)
-        return report
+        return CreatedReport(report=report, workflow_run_id=run.id)
 
 
 class GetReportHandler:
@@ -136,8 +169,11 @@ class GetReportManualRecoveryHandler:
                 raise AuthorizationError(
                     f"Manual recovery is unavailable for report {report_id}."
                 )
+            stage: Literal["analysis", "pdf"] = (
+                "pdf" if report.status == "signed" else "analysis"
+            )
 
-        return ManualRecoveryInput(raw_notes=raw_notes)
+        return ManualRecoveryInput(raw_notes=raw_notes, stage=stage)
 
 
 class ListReportsHandler:
@@ -228,10 +264,7 @@ class ReadyForSignatureHandler:
                 )
             run_repo = WorkflowRunRepository(self._uow.session)
             run = await run_repo.get_by_subject(report_id)
-            _authorize_report_workflow(run, report_id, organization_id)
-
-            audit = await VisualAuditRepository(self._uow.session).latest_by_report(report_id, organization_id)
-            _require_current_audit_acknowledgement(report, audit)
+            run = _authorize_report_workflow(run, report_id, organization_id)
 
             report.mark_ready_for_signature(now=self._clock.now())
             await report_repo.save(report)
@@ -291,19 +324,63 @@ class SignReportHandler:
             await repo.save(report)
             run_repo = WorkflowRunRepository(self._uow.session)
             run = await run_repo.get_by_subject(report_id)
-            _authorize_report_workflow(run, report_id, organization_id)
+            run = _authorize_report_workflow(run, report_id, organization_id)
             expected_version = run.state_version
             run.transition_to(WorkflowState.FINALIZATION_PENDING)
             run.transition_to(WorkflowState.PDF_PENDING)
+            run.request_dispatch()
             await run_repo.save(run, expected_version=expected_version)
             self._uow.register(report)
             self._uow.register(run)
         return report
 
 
+class RetryReportWorkflowHandler:
+    """Re-run the parked stage of a report's workflow.
+
+    Which stage to retry follows from the report's own status: a draft
+    re-runs the AI analysis, a signed report retries PDF generation.
+    """
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    async def handle(self, *, report_id: UUID, organization_id: UUID) -> Report:
+        async with self._uow:
+            report = await ReportRepository(self._uow.session).get_by_id(report_id)
+            if report is None or report.organization_id != organization_id:
+                raise AuthorizationError(
+                    f"Report {report_id} does not belong to organization {organization_id}."
+                )
+            run_repo = WorkflowRunRepository(self._uow.session)
+            run = await run_repo.get_by_subject(report_id)
+            run = _authorize_report_workflow(run, report_id, organization_id)
+            if run.state not in {
+                WorkflowState.MANUAL_INPUT_REQUIRED,
+                WorkflowState.FAILED,
+            }:
+                raise ReportStateError("This report's workflow has nothing to retry.")
+
+            if report.status == "draft":
+                target = WorkflowState.DRAFTING_PENDING
+            elif report.status == "signed":
+                target = WorkflowState.PDF_PENDING
+            else:
+                raise ReportStateError(
+                    f"A {report.status} report cannot be retried automatically."
+                )
+
+            expected_version = run.state_version
+            run.resume_to(target)
+            run.request_dispatch()
+            await run_repo.save(run, expected_version=expected_version)
+            self._uow.register(run)
+        return report
+
+
 def _authorize_report_workflow(
     run: WorkflowRun | None, report_id: UUID, organization_id: UUID
-) -> None:
+) -> WorkflowRun:
     if (
         run is None
         or run.organization_id != organization_id
@@ -314,20 +391,7 @@ def _authorize_report_workflow(
             f"Workflow for report {report_id} does not belong to "
             f"organization {organization_id}."
         )
-
-
-def _require_current_audit_acknowledgement(report: Report, audit) -> None:
-    revision = report.current_revision
-    if (
-        audit is None
-        or not audit.is_acknowledged_for(revision.id)
-        or audit.work_description != revision.work_completed
-        or audit.amount_cents != revision.amount_cents
-        or audit.currency != revision.currency
-    ):
-        raise VisualAuditStateError(
-            "A visual audit for the current report content must be acknowledged before signature."
-        )
+    return run
 
 
 async def _load_mutate_save(uow, report_id, organization_id, mutation):

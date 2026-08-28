@@ -27,6 +27,16 @@ class UserRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def get_by_id(self, user_id: object) -> User | None:
+        return await self._load(user_id)
+
+    async def get_by_email(self, email: str) -> User | None:
+        result = await self._session.execute(
+            select(users_table.c.id).where(users_table.c.email == email)
+        )
+        row = result.first()
+        return None if row is None else await self._load(row.id)
+
     async def get_by_linked_identity(
         self, provider: str, provider_subject: str
     ) -> User | None:
@@ -136,6 +146,7 @@ class UserRepository:
                 last_seen_at=user.last_seen_at,
                 activated_at=user.activated_at,
                 status=user.status,
+                locale=user.locale,
             )
         )
         await self._session.execute(

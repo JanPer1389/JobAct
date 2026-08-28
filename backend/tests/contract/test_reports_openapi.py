@@ -14,6 +14,7 @@ def test_openapi_exposes_the_report_and_manual_recovery_endpoints() -> None:
         "/api/v1/reports/{report_id}/revision",
         "/api/v1/reports/{report_id}/confirm",
         "/api/v1/reports/{report_id}/ready-for-signature",
+        "/api/v1/reports/{report_id}/retry",
         "/api/v1/reports/{report_id}/sign",
     } <= set(paths)
     assert set(paths["/api/v1/reports"]) == {"get", "post"}
@@ -26,7 +27,15 @@ def test_openapi_exposes_the_report_and_manual_recovery_endpoints() -> None:
     report_properties = schema["components"]["schemas"]["ReportResponse"][
         "properties"
     ]
-    assert {"workflow_state", "pdf_media_asset_id"} <= set(report_properties)
-    assert set(paths["/api/v1/reports/{report_id}/audits"]) == {"get", "post"}
-    assert set(paths["/api/v1/reports/{report_id}/audits/{attempt_id}"]) == {"get"}
-    assert set(paths["/api/v1/reports/{report_id}/audits/{attempt_id}/acknowledge"]) == {"post"}
+    assert set(paths["/api/v1/reports/{report_id}/retry"]) == {"post"}
+    assert {"workflow_state", "workflow_error", "pdf_media_asset_id"} <= set(
+        report_properties
+    )
+
+    # The visual comparison is part of the unified report result, not a
+    # separate audit resource the client has to trigger and poll itself.
+    revision_properties = schema["components"]["schemas"]["ReportRevisionResponse"][
+        "properties"
+    ]
+    assert {"visual_comparison_status", "visual_comparison"} <= set(revision_properties)
+    assert not [path for path in paths if "/audits" in path]

@@ -5,8 +5,8 @@ Per the plan's deviation #3: `TRANSCRIPTION_PENDING` and
 no STT, no delivery channel exists in this milestone. The live path is
 `COLLECTING_EVIDENCE -> DRAFTING_PENDING -> REVIEW_PENDING ->
 SIGNATURE_PENDING -> FINALIZATION_PENDING -> PDF_PENDING -> COMPLETED`,
-with `MANUAL_INPUT_REQUIRED` as the retry-exhausted escape from any
-non-terminal state.
+with `MANUAL_INPUT_REQUIRED` for generic retry exhaustion and `FAILED` for a
+terminal, client-visible AI failure.
 """
 
 from __future__ import annotations
@@ -23,9 +23,12 @@ class WorkflowState(StrEnum):
     PDF_PENDING = "PDF_PENDING"
     COMPLETED = "COMPLETED"
     MANUAL_INPUT_REQUIRED = "MANUAL_INPUT_REQUIRED"
+    FAILED = "FAILED"
 
 
-TERMINAL_STATES = frozenset({WorkflowState.COMPLETED, WorkflowState.MANUAL_INPUT_REQUIRED})
+TERMINAL_STATES = frozenset(
+    {WorkflowState.COMPLETED, WorkflowState.MANUAL_INPUT_REQUIRED, WorkflowState.FAILED}
+)
 
 # Explicit forward-only transition map -- any transition not listed here
 # is rejected by WorkflowRun.transition_to(). MANUAL_INPUT_REQUIRED is
@@ -37,7 +40,11 @@ ALLOWED_TRANSITIONS: dict[WorkflowState, frozenset[WorkflowState]] = {
         {WorkflowState.DRAFTING_PENDING, WorkflowState.MANUAL_INPUT_REQUIRED}
     ),
     WorkflowState.DRAFTING_PENDING: frozenset(
-        {WorkflowState.REVIEW_PENDING, WorkflowState.MANUAL_INPUT_REQUIRED}
+        {
+            WorkflowState.REVIEW_PENDING,
+            WorkflowState.MANUAL_INPUT_REQUIRED,
+            WorkflowState.FAILED,
+        }
     ),
     WorkflowState.REVIEW_PENDING: frozenset(
         {WorkflowState.SIGNATURE_PENDING, WorkflowState.MANUAL_INPUT_REQUIRED}
@@ -53,4 +60,5 @@ ALLOWED_TRANSITIONS: dict[WorkflowState, frozenset[WorkflowState]] = {
     ),
     WorkflowState.COMPLETED: frozenset(),
     WorkflowState.MANUAL_INPUT_REQUIRED: frozenset(),
+    WorkflowState.FAILED: frozenset(),
 }

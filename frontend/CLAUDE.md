@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-JobAct is a mobile-first field-service prototype: it turns a completed on-site visit (before/after photos, GPS, timestamp, voice note, work details, customer signature) into a structured service report. As of Milestone 1, sign-in, the customer list/creation, and the entire linear visit-creation flow (`screens/flow.tsx`: GPS/photo PATCHes, notes, AI report drafting, edit/confirm, real signature capture and upload, signing, PDF) are wired to the real backend — see [`../backend`](../backend/CLAUDE.md) and [`../docs/architecture/overview.md`](../docs/architecture/overview.md). The home dashboard and reports archive (`screens/main.tsx`'s `HomeScreen`/`ReportsScreen`) still render the static demo `reports`/`CURRENT_USER` data from `lib/jobact/data.ts` — they were out of Milestone 1's scope and have not been wired to `GET /reports` yet. Camera/photo capture and GPS remain simulated by design — counts and a fixed coordinate are sent to the backend, but no real device hardware is read.
+JobAct is a mobile-first field-service prototype: it turns a completed on-site visit (before/after photos, GPS, timestamp, voice note, work details, customer signature) into a structured service report. As of Milestone 1, sign-in, the customer list/creation, and the entire linear visit-creation flow (`screens/flow.tsx`: GPS/photo PATCHes, notes, AI report drafting, edit/confirm, real signature capture and upload, signing, PDF) are wired to the real backend — see [`../backend`](../backend/CLAUDE.md) and [`../docs/architecture/overview.md`](../docs/architecture/overview.md). The home dashboard and reports archive (`screens/main.tsx`'s `HomeScreen`/`ReportsScreen`) still render the static demo `reports`/`CURRENT_USER` data from `lib/jobact/data.ts` — they were out of Milestone 1's scope and have not been wired to `GET /reports` yet. Photo capture and GPS are real: `GpsScreen` reads `navigator.geolocation`, and before/after photos are normalized and uploaded as real `MediaAsset`s via presigned URLs. Voice transcription is not implemented — work notes are typed.
 
 ## Commands
 
@@ -23,14 +23,16 @@ There is no lint or test script configured. `next.config.mjs` no longer sets `ty
 
 The entire app is a single-page client-side prototype rendered from [app/page.tsx](app/page.tsx) → [components/jobact/app.tsx](components/jobact/app.tsx). There is no Next.js file-based routing beyond the one root route — all "screens" are React components swapped by an in-memory navigation stack, not URLs.
 
-**Navigation (`lib/jobact/store.tsx`)**: `NavProvider` holds a `Frame[]` stack (`{screen, params}`) in React state, exposing `navigate`/`replace`/`back`/`reset`. `Screen` is a string union enumerating every screen in the app — adding a new screen means adding it to this union first. The same provider also holds a single session-wide `DraftState` (customer, photos count, work description, amount, signed) used to thread state through the multi-step visit-creation flow (`visitStart → gps → beforePhotos → voice → voiceProcessing → afterPhotos → reportDraft → editReport → signature → completed`) without prop drilling.
+**Navigation (`lib/jobact/store.tsx`)**: `NavProvider` holds a `Frame[]` stack (`{screen, params}`) in React state, exposing `navigate`/`replace`/`back`/`reset`. `Screen` is a string union enumerating every screen in the app — adding a new screen means adding it to this union first. The same provider also holds a single session-wide `DraftState` (customer, geolocation, uploaded before/after photo assets, work description, amount, signed) used to thread state through the multi-step visit-creation flow (`visitStart → gps → beforePhotos → notes → afterPhotos → analysisProcessing → reportDraft → editReport → signature → completed`) without prop drilling.
+
+AI analysis runs **once**, from `analysisProcessing`, and only after customer, geolocation, before photos, work notes, and an equal number of after photos all exist — the backend rejects `POST /reports` with 409 otherwise. That one call produces the whole result (work report, materials, cost estimate, before/after comparison, issues, limitations), which `reportDraft` renders inline. Progress screens poll real backend workflow state via `pollUntil`/`pollReportUntilState` (`lib/jobact/polling.ts`) with a bounded attempt budget, and every outcome — terminal, timeout, or network error — leaves the loading state for an actionable screen.
 
 **Routing (`components/jobact/app.tsx`)**: `Router` reads the current `frame` from `useNav()` and `ScreenView` is a big switch statement mapping `Screen` → screen component. Bottom tab nav (`home`/`reports`/`customers`/`profile`) only shows for the four tab screens, hidden during the "picking a customer for a new report" sub-state (`params.picking`).
 
 **Screens are split by role, not 1:1 with files**:
 - `screens/onboarding.tsx` — splash, sign-in
 - `screens/main.tsx` — the four bottom-tab screens (home, reports, customers, profile)
-- `screens/flow.tsx` — the linear visit-creation flow (GPS, photos, voice, report draft/edit, signature, completed)
+- `screens/flow.tsx` — the linear visit-creation flow (GPS, photos, notes, AI analysis, report draft/edit, signature, completed)
 - `screens/detail.tsx` — customer detail, report detail (drill-down views)
 - `screens/states.tsx` — offline/syncing/hardware-permission state screens (used to demo edge-case UI, not part of the main flow)
 

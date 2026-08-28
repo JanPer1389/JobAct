@@ -90,6 +90,31 @@ docs/       Committed architecture docs and ADRs — see docs/architecture/overv
 
 ## Getting Started
 
+### One-command local stack (Docker)
+
+Prerequisites: Docker Desktop, `backend/.env` (copy from `backend/.env.example`).
+
+```bash
+docker compose up -d --build
+```
+
+This builds and starts everything — Postgres, Redis, MinIO, LiteLLM, the FastAPI `api`
+service (migrations run automatically on boot), the Redis Streams `worker`, and the Next.js
+`frontend` — from the root [`docker-compose.yml`](docker-compose.yml). No other terminals or
+commands needed.
+
+- Frontend: http://localhost:3000
+- API docs: http://localhost:8000/docs
+- MinIO console: http://localhost:9001
+- LiteLLM: http://localhost:4000
+
+Use `docker compose logs -f <service>` to tail logs and `docker compose down` to stop
+everything. Rerun with `--build` after changing a dependency (`pyproject.toml`,
+`package.json`) or the Dockerfiles.
+
+For iterating on code with hot reload and faster feedback, see the frontend/backend-only
+setup below instead.
+
 ### Frontend
 
 Prerequisites: Node.js 20 or newer, pnpm.

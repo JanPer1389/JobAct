@@ -106,6 +106,8 @@ class ReportRepository:
                 confirmed_by_user_at=revision.confirmed_by_user_at,
                 amount_confirmed_at=revision.amount_confirmed_at,
                 frozen_at=revision.frozen_at,
+                visual_comparison_status=revision.visual_comparison_status,
+                visual_comparison=revision.visual_comparison,
             )
         )
         await self._replace_materials(revision)
@@ -157,6 +159,8 @@ class ReportRepository:
                 confirmed_by_user_at=revision.confirmed_by_user_at,
                 amount_confirmed_at=revision.amount_confirmed_at,
                 frozen_at=revision.frozen_at,
+                visual_comparison_status=revision.visual_comparison_status,
+                visual_comparison=revision.visual_comparison,
             )
         )
         await self._insert_materials(revision)
@@ -200,6 +204,8 @@ class ReportRepository:
             confirmed_by_user_at=revision_row.confirmed_by_user_at,
             amount_confirmed_at=revision_row.amount_confirmed_at,
             frozen_at=revision_row.frozen_at,
+            visual_comparison_status=revision_row.visual_comparison_status,
+            visual_comparison=revision_row.visual_comparison,
             materials=[
                 Material(id=item.id, label=item.label, qty=item.qty)
                 for item in material_result

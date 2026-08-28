@@ -14,12 +14,10 @@ import {
   VisitStartScreen,
   GpsScreen,
   PhotosScreen,
-  VoiceScreen,
-  VoiceProcessingScreen,
+  NotesScreen,
+  AnalysisProcessingScreen,
   ReportDraftScreen,
   EditReportScreen,
-  AuditProcessingScreen,
-  AuditResultScreen,
   SignatureScreen,
   CompletedScreen,
 } from "./screens/flow"
@@ -74,18 +72,14 @@ function ScreenView({ screen }: { screen: Screen }) {
       return <PhotosScreen phase="before" />
     case "afterPhotos":
       return <PhotosScreen phase="after" />
-    case "voice":
-      return <VoiceScreen />
-    case "voiceProcessing":
-      return <VoiceProcessingScreen />
+    case "notes":
+      return <NotesScreen />
+    case "analysisProcessing":
+      return <AnalysisProcessingScreen />
     case "reportDraft":
       return <ReportDraftScreen />
     case "editReport":
       return <EditReportScreen />
-    case "auditProcessing":
-      return <AuditProcessingScreen />
-    case "auditResult":
-      return <AuditResultScreen />
     case "signature":
       return <SignatureScreen />
     case "completed":

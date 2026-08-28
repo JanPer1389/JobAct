@@ -22,6 +22,7 @@ touching this loop).
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import UUID
@@ -37,6 +38,9 @@ from jobact.shared.infrastructure.postgres.outbox_publisher import (
 from jobact.shared.infrastructure.postgres.tables import inbox_table
 from jobact.shared.infrastructure.redis.client import get_redis_client
 from jobact.shared.infrastructure.redis.streams import RedisStreamsBroker
+from jobact.workflows.report_fulfillment.dispatcher import (
+    process_report_fulfillment_event,
+)
 from jobact.workflows.visual_audit.dispatcher import process_visual_audit_event
 
 _PUBLISH_INTERVAL_SECONDS = 2.0
@@ -45,10 +49,21 @@ _CONSUMER_NAME = "worker-1"
 _MAX_ATTEMPTS = 5
 _RETRY_BASE_DELAY_SECONDS = 1.0
 
-# event_type -> handler. Empty for now -- nothing in this milestone
-# consumes outbox events yet.
+logger = logging.getLogger("jobact.apps.worker")
+
+
+def configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    for noisy_logger in ("httpcore", "httpx", "sqlalchemy.engine"):
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
+# event_type -> handler.
 HANDLER_REGISTRY: dict[str, Callable[[dict], Awaitable[None]]] = {
     "VisualAuditRequested": process_visual_audit_event,
+    "WorkflowStepDispatchRequested": process_report_fulfillment_event,
 }
 
 
@@ -82,31 +97,84 @@ async def _record_processed(event_id: UUID) -> None:
 
 async def _dispatch(message: Message) -> None:
     event_id = UUID(message.payload["event_id"])
+    event_type = message.payload.get("event_type", "")
+    logger.info(
+        "worker_event_received event_id=%s event_type=%s stream=%s",
+        event_id,
+        event_type,
+        message.stream,
+    )
 
     if await _already_processed(event_id):
+        logger.info(
+            "worker_event_duplicate event_id=%s event_type=%s stream=%s",
+            event_id,
+            event_type,
+            message.stream,
+        )
         await message.ack()
         return
 
-    handler = HANDLER_REGISTRY.get(message.payload.get("event_type", ""))
+    handler = HANDLER_REGISTRY.get(event_type)
+    if handler is None:
+        logger.info(
+            "worker_event_unhandled event_id=%s event_type=%s stream=%s",
+            event_id,
+            event_type,
+            message.stream,
+        )
 
     attempt = 0
     while True:
         try:
             if handler is not None:
+                logger.info(
+                    "worker_event_dispatch_started event_id=%s event_type=%s "
+                    "stream=%s attempt=%s",
+                    event_id,
+                    event_type,
+                    message.stream,
+                    attempt + 1,
+                )
                 await handler(message.payload)
             break
-        except Exception:  # noqa: BLE001 - retry boundary for all event-handler failures
+        except Exception as exc:  # noqa: BLE001 - worker retry boundary
             attempt += 1
+            logger.warning(
+                "worker_event_dispatch_failed event_id=%s event_type=%s stream=%s "
+                "attempt=%s error_type=%s",
+                event_id,
+                event_type,
+                message.stream,
+                attempt,
+                type(exc).__name__,
+            )
             if attempt >= _MAX_ATTEMPTS:
                 # Exhausted retries -- do not ack, do not record as
                 # processed. The message stays pending in the consumer
                 # group for manual investigation/replay; crashing the
                 # whole worker over one bad event would be worse.
+                logger.error(
+                    "worker_event_retry_exhausted event_id=%s event_type=%s "
+                    "stream=%s attempts=%s",
+                    event_id,
+                    event_type,
+                    message.stream,
+                    attempt,
+                )
                 return
             await asyncio.sleep(_RETRY_BASE_DELAY_SECONDS * (2**attempt))
 
     await _record_processed(event_id)
     await message.ack()
+    logger.info(
+        "worker_event_dispatch_succeeded event_id=%s event_type=%s stream=%s "
+        "attempts=%s",
+        event_id,
+        event_type,
+        message.stream,
+        max(1, attempt + 1),
+    )
 
 
 async def _run_publisher_loop(broker: MessageBroker) -> None:
@@ -121,16 +189,19 @@ async def _run_consumer_loop(broker: RedisStreamsBroker, stream: str) -> None:
 
 
 async def main() -> None:
+    configure_logging()
+    logger.info(
+        "worker_started consumer_group=%s consumer_name=%s",
+        _CONSUMER_GROUP,
+        _CONSUMER_NAME,
+    )
     broker = RedisStreamsBroker(get_redis_client())
-    # Streams are named "outbox.<aggregate_type>" (see outbox_publisher.py).
-    # No consumer loop is started per-stream here yet since no aggregate
-    # type has a registered handler in this milestone -- the publisher
-    # loop alone is enough to keep platform.outbox draining. A later
-    # milestone that adds a real handler also adds its stream's consumer
-    # loop to this gather() call.
+    # Streams are named "outbox.<aggregate_type>" (see outbox_publisher.py):
+    # one consumer loop per aggregate type that has a registered handler.
     await asyncio.gather(
         _run_publisher_loop(broker),
         _run_consumer_loop(broker, "outbox.VisualAuditAttempt"),
+        _run_consumer_loop(broker, "outbox.WorkflowRun"),
     )
 
 

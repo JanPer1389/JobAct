@@ -18,6 +18,8 @@ from jobact.shared.infrastructure.postgres.operations_tables import (
     report_number_counters_table,
     report_revisions_table,
     reports_table,
+    visual_audit_attempts_table,
+    visual_audit_photos_table,
 )
 from jobact.shared.infrastructure.postgres.uow import SqlAlchemyUnitOfWork
 from jobact.shared.infrastructure.postgres.workflow_tables import (
@@ -37,6 +39,8 @@ async def clean_tables():
     async with session_factory() as session, session.begin():
         await session.execute(delete(workflow_steps_table))
         await session.execute(delete(workflow_runs_table))
+        await session.execute(delete(visual_audit_photos_table))
+        await session.execute(delete(visual_audit_attempts_table))
         await session.execute(delete(report_materials_table))
         await session.execute(delete(report_revisions_table))
         await session.execute(delete(reports_table))
@@ -45,6 +49,8 @@ async def clean_tables():
     async with session_factory() as session, session.begin():
         await session.execute(delete(workflow_steps_table))
         await session.execute(delete(workflow_runs_table))
+        await session.execute(delete(visual_audit_photos_table))
+        await session.execute(delete(visual_audit_attempts_table))
         await session.execute(delete(report_materials_table))
         await session.execute(delete(report_revisions_table))
         await session.execute(delete(reports_table))

@@ -74,6 +74,16 @@ def build_ai_connector(settings: Settings) -> AiConnector:
     return OpenRouterConnector(settings)
 
 
+def build_ai_connectors(settings: Settings) -> list[AiConnector]:
+    """All configured providers in deterministic failover order."""
+    connectors: list[AiConnector] = []
+    if settings.anthropic_api_key.strip():
+        connectors.append(AnthropicConnector(settings.anthropic_api_key))
+    if settings.openrouter_api_key.strip():
+        connectors.append(OpenRouterConnector(settings))
+    return connectors
+
+
 def _model_name(models: dict[str, str], alias: str) -> str:
     try:
         return models[alias]
