@@ -24,6 +24,7 @@ import {
 } from "react"
 import type { ReportStatus, SyncState } from "@/lib/jobact/data"
 import { useNav } from "@/lib/jobact/store"
+import { statusLabel, syncLabel, t } from "@/lib/jobact/i18n"
 
 /* ------------------------------------------------------------------ */
 /*  Brand                                                              */
@@ -222,9 +223,10 @@ export function SearchField({ className, ...props }: InputHTMLAttributes<HTMLInp
 
 interface AmountFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string
+  currencySymbol?: string
 }
 
-export function AmountField({ label, className, ...props }: AmountFieldProps) {
+export function AmountField({ label, className, currencySymbol = "$", ...props }: AmountFieldProps) {
   return (
     <label className="block">
       {label && (
@@ -233,7 +235,7 @@ export function AmountField({ label, className, ...props }: AmountFieldProps) {
         </span>
       )}
       <span className="relative flex items-center">
-        <span className="absolute left-4 text-xl font-semibold text-muted-foreground">$</span>
+        <span className="absolute left-4 text-xl font-semibold text-muted-foreground">{currencySymbol}</span>
         <input
           inputMode="decimal"
           className={cn(
@@ -278,49 +280,34 @@ export function SectionLabel({ children }: { children: ReactNode }) {
 /*  Status badges                                                      */
 /* ------------------------------------------------------------------ */
 
-const statusMeta: Record<ReportStatus, { label: string; className: string }> = {
-  draft: {
-    label: "Draft",
-    className: "bg-muted text-muted-foreground border-border",
-  },
-  unsigned: {
-    label: "Unsigned",
-    className: "bg-warning/15 text-warning border-warning/25",
-  },
-  completed: {
-    label: "Completed",
-    className: "bg-success/15 text-success border-success/25",
-  },
-  offline: {
-    label: "Offline",
-    className: "bg-muted text-muted-foreground border-border",
-  },
+const statusClassName: Record<ReportStatus, string> = {
+  draft: "bg-muted text-muted-foreground border-border",
+  unsigned: "bg-warning/15 text-warning border-warning/25",
+  completed: "bg-success/15 text-success border-success/25",
+  offline: "bg-muted text-muted-foreground border-border",
 }
 
 export function StatusBadge({ status }: { status: ReportStatus }) {
-  const meta = statusMeta[status]
+  const { locale } = useNav()
   return (
     <span
       className={cn(
         "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
-        meta.className,
+        statusClassName[status],
       )}
     >
       <span className="size-1.5 rounded-full bg-current" />
-      {meta.label}
+      {statusLabel(locale, status)}
     </span>
   )
 }
 
-const syncMeta: Record<
-  SyncState,
-  { label: string; icon: LucideIcon; className: string }
-> = {
-  synced: { label: "Synced", icon: CheckCheck, className: "text-success" },
-  pending: { label: "Pending upload", icon: CloudUpload, className: "text-warning" },
-  syncing: { label: "Syncing", icon: RefreshCw, className: "text-muted-foreground" },
-  failed: { label: "Sync failed", icon: TriangleAlert, className: "text-destructive" },
-  offline: { label: "Saved offline", icon: WifiOff, className: "text-muted-foreground" },
+const syncMeta: Record<SyncState, { icon: LucideIcon; className: string }> = {
+  synced: { icon: CheckCheck, className: "text-success" },
+  pending: { icon: CloudUpload, className: "text-warning" },
+  syncing: { icon: RefreshCw, className: "text-muted-foreground" },
+  failed: { icon: TriangleAlert, className: "text-destructive" },
+  offline: { icon: WifiOff, className: "text-muted-foreground" },
 }
 
 export function SyncIndicator({
@@ -330,21 +317,23 @@ export function SyncIndicator({
   state: SyncState
   showLabel?: boolean
 }) {
+  const { locale } = useNav()
   const meta = syncMeta[state]
   const Icon = meta.icon
   return (
     <span className={cn("inline-flex items-center gap-1.5 text-xs font-medium", meta.className)}>
       <Icon className={cn("size-3.5", state === "syncing" && "animate-spin")} />
-      {showLabel && meta.label}
+      {showLabel && syncLabel(locale, state)}
     </span>
   )
 }
 
 export function OfflineBanner() {
+  const { locale } = useNav()
   return (
     <div className="flex items-center gap-2 border-b border-border bg-muted px-4 py-2 text-xs font-medium text-muted-foreground">
       <WifiOff className="size-3.5" />
-      Offline — your work is saved on this device
+      {t(locale, "offlineBannerText")}
     </div>
   )
 }
@@ -353,13 +342,19 @@ export function OfflineBanner() {
 /*  Progress / steps                                                   */
 /* ------------------------------------------------------------------ */
 
-/* Labels for the six-step visit flow, shown alongside the bars on wide screens */
-const FLOW_STEP_LABELS = ["Customer", "Details", "Before", "Voice", "After", "Review"]
-
 export function StepProgress({ step, total }: { step: number; total: number }) {
-  const labels = total === FLOW_STEP_LABELS.length ? FLOW_STEP_LABELS : null
+  const { locale } = useNav()
+  const flowStepLabels = [
+    t(locale, "stepCustomer"),
+    t(locale, "stepDetails"),
+    t(locale, "stepBeforeShort"),
+    t(locale, "stepVoiceShort"),
+    t(locale, "stepAfterShort"),
+    t(locale, "stepReviewShort"),
+  ]
+  const labels = total === flowStepLabels.length ? flowStepLabels : null
   return (
-    <div aria-label={`Step ${step} of ${total}`}>
+    <div aria-label={`${step}/${total}`}>
       <div className="flex items-center gap-1.5">
         {Array.from({ length: total }).map((_, i) => (
           <span
@@ -407,6 +402,8 @@ export function PhotoThumb({
   onRemove?: () => void
   index: number
 }) {
+  const { locale } = useNav()
+  const toneLabel = tone === "before" ? t(locale, "beforeShort") : t(locale, "afterShort")
   return (
     <div className="group relative aspect-square overflow-hidden rounded-xl border border-border bg-elevated">
       <div
@@ -420,12 +417,12 @@ export function PhotoThumb({
         aria-hidden="true"
       />
       <span className="absolute left-2 top-2 rounded-md bg-background/70 px-1.5 py-0.5 text-[10px] font-medium text-foreground backdrop-blur">
-        {tone === "before" ? "Before" : "After"} {index}
+        {toneLabel} {index}
       </span>
       {onRemove && (
         <button
           onClick={onRemove}
-          aria-label={`Remove photo ${index}`}
+          aria-label={t(locale, "removePhotoLabel", { label: toneLabel, n: index })}
           className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-full bg-background/80 text-foreground backdrop-blur transition hover:bg-destructive hover:text-destructive-foreground"
         >
           <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -438,10 +435,11 @@ export function PhotoThumb({
 }
 
 export function CaptureButton({ onCapture }: { onCapture: () => void }) {
+  const { locale } = useNav()
   return (
     <button
       onClick={onCapture}
-      aria-label="Capture photo"
+      aria-label={t(locale, "capturePhotoLabel")}
       className="grid aspect-square w-full place-items-center rounded-xl border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
     >
       <svg viewBox="0 0 24 24" className="size-7" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -481,11 +479,12 @@ export function EmptyState({
   )
 }
 
-export function LoadingState({ label = "Loading" }: { label?: string }) {
+export function LoadingState({ label }: { label?: string }) {
+  const { locale } = useNav()
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
       <LoaderCircle className="size-6 animate-spin" />
-      <p className="text-sm">{label}</p>
+      <p className="text-sm">{label ?? t(locale, "loading")}</p>
     </div>
   )
 }
@@ -494,7 +493,7 @@ export function ErrorState({
   icon: Icon = TriangleAlert,
   title,
   description,
-  retryLabel = "Try again",
+  retryLabel,
   onRetry,
   secondary,
 }: {
@@ -505,6 +504,7 @@ export function ErrorState({
   onRetry?: () => void
   secondary?: ReactNode
 }) {
+  const { locale } = useNav()
   return (
     <div className="flex flex-col items-center justify-center px-8 py-14 text-center">
       <div className="mb-4 grid size-14 place-items-center rounded-2xl border border-destructive/30 bg-destructive/10 text-destructive">
@@ -516,7 +516,7 @@ export function ErrorState({
       </p>
       {onRetry && (
         <Button variant="secondary" size="md" icon={RefreshCw} className="mt-5" onClick={onRetry}>
-          {retryLabel}
+          {retryLabel ?? t(locale, "tryAgain")}
         </Button>
       )}
       {secondary && <div className="mt-3">{secondary}</div>}
@@ -577,7 +577,7 @@ export function ScreenHeader({
   totalSteps?: number
   width?: "wide" | "form"
 }) {
-  const { canGoBack } = useNav()
+  const { canGoBack, locale: canGoBackLocale } = useNav()
   // Screens pass `back` unconditionally; only draw the control when it can do something
   const showBack = Boolean(onBack) && canGoBack
 
@@ -591,7 +591,7 @@ export function ScreenHeader({
       >
         <div className="flex items-center gap-2">
           {showBack && (
-            <IconButton icon={ChevronLeft} label="Go back" onClick={onBack} className="-ml-2" />
+            <IconButton icon={ChevronLeft} label={t(canGoBackLocale, "goBack")} onClick={onBack} className="-ml-2" />
           )}
           <div className="min-w-0 flex-1">
             {title && (
@@ -629,6 +629,7 @@ export const SignatureCanvas = forwardRef<
     onChange?: (hasInk: boolean) => void
   }
 >(function SignatureCanvas({ onChange }, ref) {
+  const { locale } = useNav()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const drawing = useRef(false)
   const activePointer = useRef<number | null>(null)
@@ -734,14 +735,14 @@ export const SignatureCanvas = forwardRef<
         {!hasInk && (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1 text-muted-foreground">
             <PenLineIcon />
-            <span className="text-sm">Sign here with your mouse or finger</span>
+            <span className="text-sm">{t(locale, "signHereHint")}</span>
           </div>
         )}
         <div className="pointer-events-none absolute inset-x-6 bottom-8 border-b border-dashed border-border" />
       </div>
       <div className="mt-2 flex justify-end">
         <Button variant="ghost" size="sm" onClick={clear} disabled={!hasInk}>
-          Clear
+          {t(locale, "clear")}
         </Button>
       </div>
     </div>

@@ -88,6 +88,7 @@ class UserRepository:
             email_verified=user_row["email_verified"],
             status=user_row["status"],
             locale=user_row["locale"],
+            currency=user_row["currency"],
             timezone=user_row["timezone"],
             registered_at=user_row["registered_at"],
             activated_at=user_row["activated_at"],
@@ -115,6 +116,7 @@ class UserRepository:
                 email_verified=user.email_verified,
                 status=user.status,
                 locale=user.locale,
+                currency=user.currency,
                 timezone=user.timezone,
                 registered_at=user.registered_at,
                 activated_at=user.activated_at,
@@ -147,6 +149,7 @@ class UserRepository:
                 activated_at=user.activated_at,
                 status=user.status,
                 locale=user.locale,
+                currency=user.currency,
             )
         )
         await self._session.execute(

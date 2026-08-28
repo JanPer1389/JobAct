@@ -5,26 +5,29 @@ import { Camera, LoaderCircle, MapPin, Mic, ShieldCheck } from "lucide-react"
 import { Button, Card, Input, Logo } from "../ui"
 import { apiFetch, JobActApiError } from "@/lib/jobact/api"
 import { useNav, type Session } from "@/lib/jobact/store"
+import { t, type AppLocale } from "@/lib/jobact/i18n"
 
 export { Logo }
 
-const features = [
-  { icon: Camera, text: "Before & after photos, timestamped" },
-  { icon: MapPin, text: "Automatic GPS location on arrival" },
-  { icon: Mic, text: "Describe the work by voice, not typing" },
-  { icon: ShieldCheck, text: "Customer signature, archived as proof" },
-]
+/** No preference exists to read before sign-in, so fall back to the
+ * browser's own language rather than always defaulting to English. */
+function browserLocale(): AppLocale {
+  if (typeof navigator === "undefined") return "en-US"
+  return navigator.language.toLowerCase().startsWith("ru") ? "ru-RU" : "en-US"
+}
 
 export function SplashScreen() {
-  const { replace, setLocale, setSession } = useNav()
+  const { replace, setLocale, setCurrency, setSession, locale } = useNav()
   useEffect(() => {
     let cancelled = false
+    setLocale(browserLocale())
 
     apiFetch<Session>("/api/v1/auth/session")
       .then((session) => {
         if (cancelled) return
         setSession(session)
         setLocale(session.locale)
+        setCurrency(session.currency)
         const linkingResult = new URLSearchParams(window.location.search).get("auth_link")
         replace(linkingResult ? "profile" : "home")
       })
@@ -37,7 +40,8 @@ export function SplashScreen() {
     return () => {
       cancelled = true
     }
-  }, [replace, setLocale, setSession])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replace, setCurrency, setLocale, setSession])
 
   return (
     <div className="relative flex flex-1 flex-col items-center justify-center bg-background">
@@ -45,10 +49,10 @@ export function SplashScreen() {
         <Logo size="lg" />
       </div>
       <h1 className="mt-6 text-2xl font-semibold tracking-tight text-foreground">JobAct</h1>
-      <p className="mt-1.5 text-sm text-muted-foreground">Proof of work, in 2 minutes</p>
+      <p className="mt-1.5 text-sm text-muted-foreground">{t(locale, "proofOfWorkTagline")}</p>
       <div className="absolute bottom-16 flex items-center gap-2 text-xs text-muted-foreground">
         <div className="size-1.5 animate-pulse rounded-full bg-muted-foreground" />
-        Loading your workspace
+        {t(locale, "loadingWorkspace")}
       </div>
     </div>
   )
@@ -57,7 +61,7 @@ export function SplashScreen() {
 type AuthMode = "register" | "login"
 
 export function SignInScreen() {
-  const { reset, setLocale, setSession } = useNav()
+  const { reset, setCurrency, setLocale, setSession, locale } = useNav()
   const [mode, setMode] = useState<AuthMode>("register")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -68,15 +72,21 @@ export function SignInScreen() {
   const [submitError, setSubmitError] = useState("")
   const [submitting, setSubmitting] = useState(false)
 
+  const features = [
+    { icon: Camera, text: t(locale, "featureBeforeAfter") },
+    { icon: MapPin, text: t(locale, "featureGps") },
+    { icon: Mic, text: t(locale, "featureVoice") },
+    { icon: ShieldCheck, text: t(locale, "featureSignature") },
+  ]
+
   useEffect(() => {
     const authError = new URLSearchParams(window.location.search).get("auth_error")
     if (authError === "google-link-required") {
       setMode("login")
-      setSubmitError(
-        "An account already uses that email. Sign in first, then link Google from Account security.",
-      )
+      setSubmitError(t(locale, "googleLinkRequiredMessage"))
       window.history.replaceState({}, "", window.location.pathname)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function switchMode(nextMode: AuthMode) {
@@ -93,9 +103,9 @@ export function SignInScreen() {
     const malformedEmail = !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
     const invalidPassword = mode === "register" && (password.length < 12 || password.length > 128)
     const mismatch = mode === "register" && password !== repeatPassword
-    setEmailError(malformedEmail ? "Enter a valid email address." : "")
-    setPasswordError(invalidPassword ? "Use 12–128 characters." : "")
-    setRepeatError(mismatch ? "Passwords do not match." : "")
+    setEmailError(malformedEmail ? t(locale, "enterValidEmail") : "")
+    setPasswordError(invalidPassword ? t(locale, "passwordHint") : "")
+    setRepeatError(mismatch ? t(locale, "passwordsDoNotMatch") : "")
     setSubmitError("")
     if (malformedEmail || invalidPassword || mismatch) return
 
@@ -114,6 +124,7 @@ export function SignInScreen() {
       )
       setSession(session)
       setLocale(session.locale)
+      setCurrency(session.currency)
       reset("home")
     } catch (error) {
       if (error instanceof JobActApiError) {
@@ -129,7 +140,7 @@ export function SignInScreen() {
             : error.response.detail,
         )
       } else {
-        setSubmitError("Authentication is unavailable. Please try again.")
+        setSubmitError(t(locale, "authUnavailable"))
       }
     } finally {
       setSubmitting(false)
@@ -142,7 +153,7 @@ export function SignInScreen() {
         <div>
           <Logo />
           <h1 className="mt-8 text-3xl font-semibold leading-tight tracking-tight text-foreground text-balance lg:text-5xl">
-            Undeniable proof of every visit.
+            {t(locale, "undeniableProofHeading")}
           </h1>
           <ul className="mt-6 hidden space-y-3 lg:block">
             {features.map((feature) => (
@@ -156,16 +167,16 @@ export function SignInScreen() {
 
         <Card className="p-6 lg:p-8">
           <h2 className="text-2xl font-semibold text-foreground">
-            {mode === "register" ? "Create account" : "Sign in"}
+            {mode === "register" ? t(locale, "createAccountHeading") : t(locale, "signInHeading")}
           </h2>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            {mode === "register" ? "Create your personal JobAct workspace." : "Welcome back to JobAct."}
+            {mode === "register" ? t(locale, "createAccountSubtitle") : t(locale, "welcomeBackSubtitle")}
           </p>
 
           <form className="mt-7 space-y-4" onSubmit={submit} noValidate>
             <Input
               id="auth-email"
-              label="Email"
+              label={t(locale, "emailLabel")}
               type="email"
               autoComplete="email"
               value={email}
@@ -175,13 +186,13 @@ export function SignInScreen() {
             />
             <Input
               id="auth-password"
-              label="Password"
+              label={t(locale, "passwordLabel")}
               type="password"
               autoComplete={mode === "register" ? "new-password" : "current-password"}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               error={passwordError}
-              hint={mode === "register" ? "Use 12–128 characters." : undefined}
+              hint={mode === "register" ? t(locale, "passwordHint") : undefined}
               minLength={mode === "register" ? 12 : undefined}
               maxLength={128}
               required
@@ -189,7 +200,7 @@ export function SignInScreen() {
             {mode === "register" && (
               <Input
                 id="auth-repeat-password"
-                label="Repeat password"
+                label={t(locale, "repeatPasswordLabel")}
                 type="password"
                 autoComplete="new-password"
                 value={repeatPassword}
@@ -203,24 +214,24 @@ export function SignInScreen() {
             </div>
             <Button type="submit" size="lg" fullWidth disabled={submitting}>
               {submitting && <LoaderCircle className="size-5 animate-spin" />}
-              {mode === "register" ? "Create account" : "Sign in"}
+              {mode === "register" ? t(locale, "createAccountHeading") : t(locale, "signInHeading")}
             </Button>
           </form>
 
           <p className="mt-5 text-center text-sm text-muted-foreground">
-            {mode === "register" ? "Already have an account?" : "Need an account?"}{" "}
+            {mode === "register" ? t(locale, "alreadyHaveAccount") : t(locale, "needAccount")}{" "}
             <button
               type="button"
               className="font-medium text-foreground underline underline-offset-4"
               onClick={() => switchMode(mode === "register" ? "login" : "register")}
             >
-              {mode === "register" ? "Sign in" : "Create account"}
+              {mode === "register" ? t(locale, "signInHeading") : t(locale, "createAccountHeading")}
             </button>
           </p>
 
           <div className="my-6 flex items-center gap-3 text-xs uppercase tracking-wider text-muted-foreground">
             <span className="h-px flex-1 bg-border" />
-            or
+            {t(locale, "orDivider")}
             <span className="h-px flex-1 bg-border" />
           </div>
           <Button
@@ -230,7 +241,7 @@ export function SignInScreen() {
             fullWidth
             onClick={() => window.location.assign("/api/v1/auth/google/start")}
           >
-            Continue with Google
+            {t(locale, "continueWithGoogle")}
           </Button>
         </Card>
       </div>

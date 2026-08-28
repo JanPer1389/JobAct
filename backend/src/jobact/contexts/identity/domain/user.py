@@ -43,6 +43,7 @@ class User(AggregateRoot):
         email_verified: bool,
         status: str,
         locale: str,
+        currency: str,
         timezone: str,
         registered_at: datetime,
         activated_at: datetime | None,
@@ -56,6 +57,7 @@ class User(AggregateRoot):
         self.email_verified = email_verified
         self.status = status
         self.locale = locale
+        self.currency = currency
         self.timezone = timezone
         self.registered_at = registered_at
         self.activated_at = activated_at
@@ -75,6 +77,7 @@ class User(AggregateRoot):
         family_name: str,
         avatar_url: str | None,
         locale: str,
+        currency: str,
         timezone: str,
         registered_at: datetime,
     ) -> "User":
@@ -92,6 +95,7 @@ class User(AggregateRoot):
             email_verified=email_verified,
             status="active",
             locale=locale,
+            currency=currency,
             timezone=timezone,
             registered_at=registered_at,
             activated_at=None,
@@ -127,6 +131,11 @@ class User(AggregateRoot):
         if locale not in {"en-US", "ru-RU"}:
             raise ValueError("Unsupported locale")
         self.locale = locale
+
+    def change_currency(self, currency: str) -> None:
+        if currency not in {"USD", "RUB"}:
+            raise ValueError("Unsupported currency")
+        self.currency = currency
 
     def change_email(self, email: str, email_verified: bool) -> None:
         """Update this user's email (e.g. when a linked identity provider

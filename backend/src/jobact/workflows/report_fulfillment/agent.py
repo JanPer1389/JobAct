@@ -89,8 +89,13 @@ _SYSTEM_PROMPT = (
     "the same work twice because it is mentioned more than once, and never "
     "count work the notes do not describe. Never output a price, a "
     "currency, or any monetary amount -- the application computes the "
-    "price from your unit count. Set confidence to reflect how well the "
-    "notes support the summary and the unit count."
+    "price from your unit count. Never perform currency conversion and "
+    "never decide or state which currency applies -- that is the "
+    "application's job. Write every natural-language field (the work "
+    "summary and material labels) in the response language given in the "
+    "job context -- never default to English if a different response "
+    "language is specified. Set confidence to reflect how well the notes "
+    "support the summary and the unit count."
 )
 
 
@@ -107,6 +112,8 @@ class ReportAnalysisContext:
     current_work_completed: str | None = None
     current_materials: list[DraftedMaterial] = field(default_factory=list)
     current_amount_cents: int | None = None
+    currency: str = "USD"
+    response_language: str = "English"
 
 
 def build_drafting_prompt(context: ReportAnalysisContext) -> str:
@@ -115,6 +122,12 @@ def build_drafting_prompt(context: ReportAnalysisContext) -> str:
         f"- Customer: {context.customer_name}",
         f"- Address: {context.customer_address}",
         f"- Service type: {context.customer_service_type}",
+        (
+            "- Currency (context only -- do not convert or restate an "
+            f"amount in this currency; the application handles all money): "
+            f"{context.currency}"
+        ),
+        f"- Response language: {context.response_language}",
     ]
     if context.gps_lat is not None and context.gps_lon is not None:
         lines.append(f"- Visit coordinates: {context.gps_lat}, {context.gps_lon}")

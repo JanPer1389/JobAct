@@ -48,6 +48,7 @@ from jobact.contexts.identity.infrastructure.user_repository import UserReposito
 from jobact.contracts.errors.v1.envelope import ApiError
 from jobact.contracts.http.v1.auth import (
     AuthMethodsResponse,
+    CurrencyUpdateRequest,
     LocaleUpdateRequest,
     LoginRequest,
     PasswordUpdateRequest,
@@ -157,6 +158,7 @@ async def _establish_session(
         organization_id=result.organization_id,
         role=result.role,
         locale=user.locale,
+        currency=user.currency,
     )
 
 
@@ -294,6 +296,21 @@ async def update_locale(
     return Response(status_code=204)
 
 
+@router.put("/currency", status_code=204, dependencies=[Depends(require_allowed_origin)])
+async def update_currency(
+    body: CurrencyUpdateRequest,
+    principal: CurrentPrincipal = Depends(get_current_principal),
+) -> Response:
+    async with SqlAlchemyUnitOfWork() as uow:
+        repository = UserRepository(uow.session)
+        user = await repository.get_by_id(principal.user_id)
+        if user is None:
+            raise ApiError(status=401, type="unauthenticated", title="Unauthenticated", detail="User not found.")
+        user.change_currency(body.currency)
+        await repository.save(user)
+    return Response(status_code=204)
+
+
 @router.get("/google/start")
 async def google_start(
     identity_provider: IdentityProvider = Depends(get_identity_provider),
@@ -424,6 +441,7 @@ async def get_session(
         organization_id=principal.organization_id,
         role=principal.role,
         locale=user.locale,
+        currency=user.currency,
     )
 
 

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
+from jobact.contexts.identity.infrastructure.user_repository import UserRepository
 from jobact.contexts.media.infrastructure.media_asset_repository import (
     MediaAssetRepository,
 )
@@ -90,6 +91,8 @@ class CreateReportHandler:
             repo = ReportRepository(self._uow.session)
             now = self._clock.now()
             human_id = await repo.allocate_human_id(organization_id, now.year)
+            creator = await UserRepository(self._uow.session).get_by_id(created_by)
+            currency = creator.currency if creator is not None else "RUB"
             report = Report.create_draft(
                 id=self._id_generator.new_id(),
                 organization_id=organization_id,
@@ -98,6 +101,7 @@ class CreateReportHandler:
                 revision_id=self._id_generator.new_id(),
                 created_at=now,
                 created_by=created_by,
+                currency=currency,
             )
             await repo.add(report)
             run = WorkflowRun.start(

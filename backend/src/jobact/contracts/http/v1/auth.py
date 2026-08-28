@@ -64,6 +64,10 @@ class LocaleUpdateRequest(BaseModel):
     locale: Literal["en-US", "ru-RU"]
 
 
+class CurrencyUpdateRequest(BaseModel):
+    currency: Literal["USD", "RUB"]
+
+
 class SessionResponse(BaseModel):
     """Body of a successful `GET /api/v1/auth/session` response.
 
@@ -78,3 +82,4 @@ class SessionResponse(BaseModel):
     organization_id: UUID
     role: str
     locale: Literal["en-US", "ru-RU"]
+    currency: Literal["USD", "RUB"]

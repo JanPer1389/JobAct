@@ -36,6 +36,7 @@ users_table = Table(
     Column("email_verified", Boolean, nullable=False),
     Column("status", Text, nullable=False),
     Column("locale", Text, nullable=False),
+    Column("currency", Text, nullable=False),
     Column("timezone", Text, nullable=False),
     Column("registered_at", DateTime(timezone=True), nullable=False),
     Column("activated_at", DateTime(timezone=True), nullable=True),

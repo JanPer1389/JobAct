@@ -34,11 +34,22 @@ import {
 } from "@/lib/jobact/data"
 import { useNav } from "@/lib/jobact/store"
 import { apiFetch, type ReportResponse } from "@/lib/jobact/api"
+import {
+  formatCurrency,
+  formatDate,
+  formatDateTime,
+  formatTime,
+  statusLabel,
+  syncLabel,
+  t,
+  tPlural,
+  verdictLabel,
+} from "@/lib/jobact/i18n"
 
 /* -------------------------- CUSTOMER DETAIL --------------------------- */
 
 export function CustomerDetailScreen() {
-  const { back, navigate, frame } = useNav()
+  const { back, navigate, frame, locale } = useNav()
   const customer = allCustomers.find((c) => c.id === frame.params.customerId) ?? allCustomers[0]
   const history = allReports.filter((r) => r.customerId === customer.id)
 
@@ -55,7 +66,7 @@ export function CustomerDetailScreen() {
             className="hidden lg:inline-flex"
             onClick={() => navigate("visitStart", { customerId: customer.id })}
           >
-            New report
+            {t(locale, "newReport")}
           </Button>
         }
       />
@@ -68,7 +79,7 @@ export function CustomerDetailScreen() {
                 <Avatar initials={customerInitials(customer.name)} className="size-12 rounded-2xl text-base" />
                 <div className="min-w-0 flex-1">
                   <p className="text-base font-semibold text-foreground">{customer.name}</p>
-                  <p className="text-xs text-muted-foreground">{customer.visits} visits on record</p>
+                  <p className="text-xs text-muted-foreground">{tPlural(locale, "visitsOnRecord", customer.visits)}</p>
                 </div>
               </div>
               <div className="mt-4 space-y-2.5 text-sm">
@@ -83,7 +94,7 @@ export function CustomerDetailScreen() {
                 {customer.lastVisit && (
                   <div className="flex items-center gap-2.5 text-muted-foreground">
                     <Calendar className="size-4 shrink-0" />
-                    <span className="text-foreground">Last visit {customer.lastVisit}</span>
+                    <span className="text-foreground">{t(locale, "lastVisitLabel", { date: formatDate(locale, customer.lastVisit) })}</span>
                   </div>
                 )}
               </div>
@@ -96,15 +107,15 @@ export function CustomerDetailScreen() {
               className="mt-4 lg:hidden"
               onClick={() => navigate("visitStart", { customerId: customer.id })}
             >
-              New report for this customer
+              {t(locale, "newReportForCustomer")}
             </Button>
           </div>
 
           {/* History */}
           <section className="lg:order-1 lg:col-span-2">
-            <SectionLabel>Visit history</SectionLabel>
+            <SectionLabel>{t(locale, "visitHistoryLabel")}</SectionLabel>
             {history.length === 0 ? (
-              <EmptyState icon={FileText} title="No visits yet" description="Create the first report for this customer." />
+              <EmptyState icon={FileText} title={t(locale, "noVisitsYet")} description={t(locale, "noVisitsYetDesc")} />
             ) : (
               <div className="grid gap-3 sm:grid-cols-2">
                 {history.map((r) => (
@@ -122,7 +133,7 @@ export function CustomerDetailScreen() {
 /* --------------------------- REPORT DETAIL ---------------------------- */
 
 export function ReportDetailScreen() {
-  const { back, frame } = useNav()
+  const { back, frame, locale } = useNav()
   const report = allReports.find((r) => r.id === frame.params.reportId) ?? allReports[0]
 
   return (
@@ -209,8 +220,8 @@ export function ReportDetailScreen() {
               <Card className="divide-y divide-border">
                 <DetailRow icon={User} label="Technician" value={report.technician} />
                 <DetailRow icon={MapPin} label="Address" value={report.address} />
-                <DetailRow icon={Calendar} label="Date" value={report.date} />
-                <DetailRow icon={Clock} label="Time" value={report.time} />
+                <DetailRow icon={Calendar} label="Date" value={formatDate(locale, report.visitedAt)} />
+                <DetailRow icon={Clock} label="Time" value={formatTime(locale, report.visitedAt)} />
                 <DetailRow icon={MapPin} label="Coordinates" value={report.coords} mono />
               </Card>
             </section>
@@ -224,7 +235,7 @@ export function ReportDetailScreen() {
                 {report.signed ? (
                   <div>
                     <p className="text-sm font-medium text-foreground">Signed on-site</p>
-                    <p className="text-xs text-muted-foreground">{report.date} · {report.time}</p>
+                    <p className="text-xs text-muted-foreground">{formatDateTime(locale, report.visitedAt)}</p>
                   </div>
                 ) : (
                   <div>
@@ -261,7 +272,7 @@ export function ReportDetailScreen() {
 }
 
 export function BackendReportDetailScreen() {
-  const { back, frame } = useNav()
+  const { back, frame, locale } = useNav()
   const reportId = frame.params.reportId as string
   const [report, setReport] = useState<ReportResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -273,16 +284,16 @@ export function BackendReportDetailScreen() {
         if (!cancelled) setReport(nextReport)
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not load report.")
+        if (!cancelled) setError(reason instanceof Error ? reason.message : t(locale, "couldNotLoadReport"))
       })
     return () => { cancelled = true }
-  }, [reportId])
+  }, [reportId, locale])
 
   if (!report) {
     return (
       <>
-        <ScreenHeader title="Report" subtitle={reportId} onBack={back} width="wide" />
-        <Page width="wide"><Card className="p-5 text-sm text-muted-foreground">{error ?? "Loading report…"}</Card></Page>
+        <ScreenHeader title={t(locale, "reportTitleFallback")} subtitle={reportId} onBack={back} width="wide" />
+        <Page width="wide"><Card className="p-5 text-sm text-muted-foreground">{error ?? t(locale, "loadingReportEllipsis")}</Card></Page>
       </>
     )
   }
@@ -292,7 +303,7 @@ export function BackendReportDetailScreen() {
     <>
       <ScreenHeader
         title={report.human_id}
-        subtitle={`Revision ${revision.revision_no}`}
+        subtitle={t(locale, "revisionNumberLabel", { n: revision.revision_no })}
         onBack={back}
         width="wide"
         right={<StatusBadge status={report.status as ReportStatus} />}
@@ -301,12 +312,12 @@ export function BackendReportDetailScreen() {
         <div className="grid gap-6 lg:grid-cols-3 lg:gap-8">
           <div className="space-y-6 lg:col-span-2">
             <section>
-              <SectionLabel>Work completed</SectionLabel>
+              <SectionLabel>{t(locale, "workCompletedLabel")}</SectionLabel>
               <Card className="mt-2 p-5 text-sm leading-relaxed text-foreground">{revision.work_completed}</Card>
             </section>
             {revision.materials.length > 0 && (
               <section>
-                <SectionLabel>Materials / consumables</SectionLabel>
+                <SectionLabel>{t(locale, "materialsLabel")}</SectionLabel>
                 <Card className="mt-2 divide-y divide-border">
                   {revision.materials.map((material) => (
                     <div key={`${material.label}-${material.qty}`} className="flex justify-between p-3.5 text-sm">
@@ -317,27 +328,27 @@ export function BackendReportDetailScreen() {
               </section>
             )}
             <section>
-              <SectionLabel>Before / after comparison</SectionLabel>
+              <SectionLabel>{t(locale, "beforeAfterComparisonLabel")}</SectionLabel>
               {revision.visual_comparison === null ? (
                 <Card className="mt-2 p-4 text-sm text-muted-foreground">
-                  No photo comparison is attached to this report.
+                  {t(locale, "noPhotoComparisonMessage")}
                 </Card>
               ) : (
                 <Card className="mt-2 p-4">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold capitalize text-foreground">
-                      {revision.visual_comparison.verdict.replaceAll("_", " ")}
+                    <p className="text-sm font-semibold text-foreground">
+                      {verdictLabel(locale, revision.visual_comparison.verdict)}
                     </p>
                     <span className="text-xs text-muted-foreground">
-                      Quality {revision.visual_comparison.quality_assessment.score}/10 ·
-                      Confidence {revision.visual_comparison.confidence}%
+                      {t(locale, "qualityLabel", { score: revision.visual_comparison.quality_assessment.score })} ·{" "}
+                      {t(locale, "confidencePercentLabel", { pct: revision.visual_comparison.confidence })}
                     </span>
                   </div>
                   <p className="mt-2 text-sm text-muted-foreground">
                     {revision.visual_comparison.summary}
                   </p>
-                  <p className="mt-2 text-xs capitalize text-muted-foreground">
-                    Price: {revision.visual_comparison.price_assessment.price_verdict.replaceAll("_", " ")}
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {t(locale, "priceLabel", { verdict: verdictLabel(locale, revision.visual_comparison.price_assessment.price_verdict) })}
                   </p>
                 </Card>
               )}
@@ -345,18 +356,20 @@ export function BackendReportDetailScreen() {
           </div>
           <div className="space-y-6">
             <section>
-              <SectionLabel>Amount</SectionLabel>
+              <SectionLabel>{t(locale, "amountLabel")}</SectionLabel>
               <Card className="mt-2 p-4 font-mono text-2xl font-semibold text-foreground">
-                {revision.amount_cents === null ? "Not specified" : `${(revision.amount_cents / 100).toFixed(2)} ${revision.currency}`}
+                {revision.amount_cents === null
+                  ? t(locale, "notSpecified")
+                  : formatCurrency(locale, revision.amount_cents / 100, revision.currency)}
               </Card>
             </section>
             <section>
-              <SectionLabel>Report details</SectionLabel>
+              <SectionLabel>{t(locale, "reportDetailsLabel")}</SectionLabel>
               <Card className="mt-2 divide-y divide-border">
-                <DetailRow icon={FileText} label="Report ID" value={report.human_id} mono />
-                <DetailRow icon={Calendar} label="Revision" value={String(revision.revision_no)} />
-                <DetailRow icon={ShieldCheck} label="Workflow" value={report.workflow_state ?? report.status} />
-                <DetailRow icon={ShieldCheck} label="Signature" value={report.signed_at ? new Date(report.signed_at).toLocaleString() : "Awaiting signature"} />
+                <DetailRow icon={FileText} label={t(locale, "reportIdLabel")} value={report.human_id} mono />
+                <DetailRow icon={Calendar} label={t(locale, "revisionLabel")} value={String(revision.revision_no)} />
+                <DetailRow icon={ShieldCheck} label={t(locale, "workflowLabel")} value={report.workflow_state ?? report.status} />
+                <DetailRow icon={ShieldCheck} label={t(locale, "signatureLabel3")} value={report.signed_at ? new Date(report.signed_at).toLocaleString(locale) : t(locale, "awaitingSignature")} />
               </Card>
             </section>
           </div>

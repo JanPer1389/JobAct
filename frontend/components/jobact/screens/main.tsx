@@ -40,7 +40,6 @@ import {
   customers as allCustomers,
   teamMembers,
   CURRENT_USER,
-  currency,
   type ReportStatus,
 } from "@/lib/jobact/data"
 import { useNav } from "@/lib/jobact/store"
@@ -51,26 +50,39 @@ import {
   type CustomerResponse,
   type ReportResponse,
 } from "@/lib/jobact/api"
-import { appLocales, t, type AppLocale } from "@/lib/jobact/i18n"
+import {
+  appCurrencies,
+  appLocales,
+  formatCurrency,
+  formatWeekdayDate,
+  greeting,
+  roleLabel,
+  statusLabel,
+  t,
+  tPlural,
+  type AppCurrency,
+  type AppLocale,
+} from "@/lib/jobact/i18n"
 
 /* -------------------------------- HOME -------------------------------- */
 
 export function HomeScreen() {
-  const { navigate } = useNav()
+  const { navigate, locale, currency: appCurrency } = useNav()
   const drafts = allReports.filter((r) => r.status === "draft" || r.status === "unsigned")
   const recent = allReports.filter((r) => r.status === "completed").slice(0, 3)
   const today = allReports.slice(0, 2)
   const pendingSync = allReports.filter((r) => r.sync !== "synced").length
+  const now = new Date()
 
   return (
     <>
       <PageHeader
-        title={`Good morning, ${CURRENT_USER.name.split(" ")[0]}`}
-        subtitle="Friday, August 22 · 2 visits scheduled"
+        title={greeting(locale, now.getHours(), CURRENT_USER.name.split(" ")[0])}
+        subtitle={`${formatWeekdayDate(locale, now)} · ${tPlural(locale, "visitsScheduled", today.length)}`}
         right={
           <div className="flex items-center gap-1">
-            <IconButton icon={Bell} label="Notifications" />
-            <button onClick={() => navigate("profile")} aria-label="Profile" className="lg:hidden">
+            <IconButton icon={Bell} label={t(locale, "notifications")} />
+            <button onClick={() => navigate("profile")} aria-label={t(locale, "profile")} className="lg:hidden">
               <Avatar initials={CURRENT_USER.initials} />
             </button>
           </div>
@@ -86,13 +98,13 @@ export function HomeScreen() {
           <div className="flex items-center justify-between gap-6">
             <div>
               <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-                Start now
+                {t(locale, "startNow")}
               </p>
               <h2 className="mt-1 text-2xl font-semibold tracking-tight text-foreground lg:text-3xl">
-                Create report
+                {t(locale, "createReportHeading")}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Photos, location & signature in ~2 min
+                {t(locale, "createReportSubtitle")}
               </p>
             </div>
             <span className="grid size-14 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground transition-transform group-hover:scale-105 lg:size-16">
@@ -100,19 +112,19 @@ export function HomeScreen() {
             </span>
           </div>
           <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground lg:mt-7 lg:gap-x-7 lg:text-sm">
-            <span className="inline-flex items-center gap-1.5"><Camera className="size-3.5" /> Photos</span>
-            <span className="inline-flex items-center gap-1.5"><Mic className="size-3.5" /> Voice</span>
-            <span className="inline-flex items-center gap-1.5"><MapPin className="size-3.5" /> GPS</span>
-            <span className="inline-flex items-center gap-1.5"><ShieldCheck className="size-3.5" /> Signature</span>
+            <span className="inline-flex items-center gap-1.5"><Camera className="size-3.5" /> {t(locale, "photosLabel")}</span>
+            <span className="inline-flex items-center gap-1.5"><Mic className="size-3.5" /> {t(locale, "voiceLabel")}</span>
+            <span className="inline-flex items-center gap-1.5"><MapPin className="size-3.5" /> {t(locale, "gpsLabel")}</span>
+            <span className="inline-flex items-center gap-1.5"><ShieldCheck className="size-3.5" /> {t(locale, "signatureLabel")}</span>
           </div>
         </button>
 
         {/* At-a-glance numbers */}
         <div className="mt-5 grid grid-cols-2 gap-3 lg:mt-6 lg:grid-cols-4">
-          <StatTile label="Billed this month" value={currency(2895)} />
-          <StatTile label="Reports" value="18" />
-          <StatTile label="Signed on-site" value="94%" />
-          <StatTile label="Awaiting sync" value={String(pendingSync)} tone={pendingSync ? "warning" : "default"} />
+          <StatTile label={t(locale, "billedThisMonth")} value={formatCurrency(locale, 2895, appCurrency)} />
+          <StatTile label={t(locale, "reportsStat")} value="18" />
+          <StatTile label={t(locale, "signedOnSiteStat")} value="94%" />
+          <StatTile label={t(locale, "awaitingSync")} value={String(pendingSync)} tone={pendingSync ? "warning" : "default"} />
         </div>
 
         <div className="mt-7 grid gap-7 lg:mt-8 lg:grid-cols-3 lg:gap-8">
@@ -121,7 +133,7 @@ export function HomeScreen() {
             {drafts.length > 0 && (
               <section>
                 <div className="mb-3 flex items-center justify-between">
-                  <SectionLabel>Unfinished drafts</SectionLabel>
+                  <SectionLabel>{t(locale, "unfinishedDrafts")}</SectionLabel>
                 </div>
                 <div className="grid gap-2.5 sm:grid-cols-2">
                   {drafts.map((r) => (
@@ -135,7 +147,7 @@ export function HomeScreen() {
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-foreground">{r.customerName}</p>
-                        <p className="truncate text-xs text-muted-foreground">Resume where you left off</p>
+                        <p className="truncate text-xs text-muted-foreground">{t(locale, "resumeWhereYouLeftOff")}</p>
                       </div>
                       <StatusBadge status={r.status} />
                     </button>
@@ -146,12 +158,12 @@ export function HomeScreen() {
 
             <section>
               <div className="mb-3 flex items-center justify-between">
-                <SectionLabel>Recent reports</SectionLabel>
+                <SectionLabel>{t(locale, "recentReports")}</SectionLabel>
                 <button
                   onClick={() => navigate("reports")}
                   className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
                 >
-                  View all <ArrowRight className="size-3" />
+                  {t(locale, "viewAll")} <ArrowRight className="size-3" />
                 </button>
               </div>
               <div className="grid gap-2.5 sm:grid-cols-2">
@@ -165,7 +177,7 @@ export function HomeScreen() {
           {/* Side column */}
           <div className="space-y-7 lg:space-y-8">
             <section>
-              <SectionLabel>Sync</SectionLabel>
+              <SectionLabel>{t(locale, "syncSection")}</SectionLabel>
               <button
                 onClick={() => navigate("sync")}
                 className="flex w-full items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-accent"
@@ -176,9 +188,9 @@ export function HomeScreen() {
                   </span>
                   <div>
                     <p className="text-sm font-medium text-foreground">
-                      {pendingSync} report{pendingSync === 1 ? "" : "s"} to sync
+                      {tPlural(locale, "reportsToSync", pendingSync)}
                     </p>
-                    <p className="text-xs text-muted-foreground">Review sync status</p>
+                    <p className="text-xs text-muted-foreground">{t(locale, "reviewSyncStatus")}</p>
                   </div>
                 </div>
                 <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
@@ -186,7 +198,7 @@ export function HomeScreen() {
             </section>
 
             <section>
-              <SectionLabel>Latest visits</SectionLabel>
+              <SectionLabel>{t(locale, "latestVisits")}</SectionLabel>
               <div className="space-y-2.5">
                 {today.map((r) => (
                   <VisitCard key={r.id} report={r} onClick={() => navigate("reportDetail", { reportId: r.id })} />
@@ -196,17 +208,17 @@ export function HomeScreen() {
 
             {CURRENT_USER.role === "owner" && (
               <section>
-                <SectionLabel>Team today</SectionLabel>
+                <SectionLabel>{t(locale, "teamToday")}</SectionLabel>
                 <Card className="divide-y divide-border">
                   {teamMembers.map((m) => (
                     <div key={m.id} className="flex items-center gap-3 p-3">
                       <Avatar initials={m.initials} />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-foreground">{m.name}</p>
-                        <p className="text-xs capitalize text-muted-foreground">{m.role}</p>
+                        <p className="text-xs text-muted-foreground">{roleLabel(locale, m.role)}</p>
                       </div>
                       <span className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                        {m.visitsToday} visit{m.visitsToday === 1 ? "" : "s"}
+                        {tPlural(locale, "visitsToday", m.visitsToday)}
                       </span>
                     </div>
                   ))}
@@ -246,17 +258,25 @@ function StatTile({
 
 /* ------------------------------ REPORTS ------------------------------- */
 
-const filters = [
-  { key: "all", label: "All" },
-  { key: "completed", label: "Completed" },
-  { key: "unsigned", label: "Unsigned" },
-  { key: "draft", label: "Drafts" },
-]
+const filterKeys = ["all", "completed", "unsigned", "draft"] as const
+
+function filterLabel(locale: AppLocale, key: (typeof filterKeys)[number]): string {
+  switch (key) {
+    case "completed":
+      return t(locale, "filterCompleted")
+    case "unsigned":
+      return t(locale, "filterUnsigned")
+    case "draft":
+      return t(locale, "filterDraft")
+    default:
+      return t(locale, "filterAll")
+  }
+}
 
 export function ReportsScreen() {
-  const { navigate } = useNav()
+  const { navigate, locale, currency: appCurrency } = useNav()
   const [query, setQuery] = useState("")
-  const [filter, setFilter] = useState("all")
+  const [filter, setFilter] = useState<(typeof filterKeys)[number]>("all")
   const [reports, setReports] = useState<ReportResponse[]>([])
   const [error, setError] = useState<string | null>(null)
 
@@ -265,10 +285,10 @@ export function ReportsScreen() {
     apiFetch<ReportResponse[]>("/api/v1/reports")
       .then((items) => { if (!cancelled) setReports(items) })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not load reports.")
+        if (!cancelled) setError(reason instanceof Error ? reason.message : t(locale, "couldNotLoadReports"))
       })
     return () => { cancelled = true }
-  }, [])
+  }, [locale])
 
   const results = useMemo(() => {
     return reports.filter((r) => {
@@ -284,34 +304,34 @@ export function ReportsScreen() {
   return (
     <>
       <PageHeader
-        title="Reports"
-        subtitle={`${reports.length} reports on record`}
+        title={t(locale, "reportsTitle")}
+        subtitle={tPlural(locale, "reportsOnRecord", reports.length)}
         right={
           <Button icon={Plus} className="hidden lg:inline-flex" onClick={() => navigate("customers", { picking: true })}>
-            New report
+            {t(locale, "newReportBtn")}
           </Button>
         }
       >
         <div className="mt-3 flex flex-col gap-3 lg:mt-5 lg:flex-row lg:items-center lg:justify-between">
           <SearchField
-            placeholder="Search customer or report ID"
+            placeholder={t(locale, "searchCustomerOrId")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="lg:max-w-sm"
           />
           <div className="no-scrollbar flex gap-2 overflow-x-auto">
-            {filters.map((f) => (
+            {filterKeys.map((key) => (
               <button
-                key={f.key}
-                onClick={() => setFilter(f.key)}
+                key={key}
+                onClick={() => setFilter(key)}
                 className={
                   "shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors " +
-                  (filter === f.key
+                  (filter === key
                     ? "border-transparent bg-primary text-primary-foreground"
                     : "border-border bg-card text-muted-foreground hover:text-foreground")
                 }
               >
-                {f.label}
+                {filterLabel(locale, key)}
               </button>
             ))}
           </div>
@@ -323,8 +343,8 @@ export function ReportsScreen() {
         {results.length === 0 ? (
           <EmptyState
             icon={FileText}
-            title="No reports found"
-            description="Try a different search or filter to find the visit you are looking for."
+            title={t(locale, "noReportsFound")}
+            description={t(locale, "noReportsFoundDesc")}
           />
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -335,9 +355,11 @@ export function ReportsScreen() {
                     <p className="font-mono text-xs text-muted-foreground">{r.human_id}</p>
                     <StatusBadge status={r.status as ReportStatus} />
                   </div>
-                  <p className="mt-3 line-clamp-2 text-sm text-foreground">{r.current_revision.work_completed || "Report awaiting details"}</p>
+                  <p className="mt-3 line-clamp-2 text-sm text-foreground">{r.current_revision.work_completed || t(locale, "reportAwaitingDetails")}</p>
                   <p className="mt-3 font-mono text-lg font-semibold text-foreground">
-                    {r.current_revision.amount_cents === null ? "No price" : `${(r.current_revision.amount_cents / 100).toFixed(2)} ${r.current_revision.currency}`}
+                    {r.current_revision.amount_cents === null
+                      ? t(locale, "noPrice")
+                      : formatCurrency(locale, r.current_revision.amount_cents / 100, r.current_revision.currency)}
                   </p>
                 </Card>
               </button>
@@ -352,7 +374,7 @@ export function ReportsScreen() {
 /* ------------------------------ CUSTOMERS ----------------------------- */
 
 export function CustomersScreen({ picking = false }: { picking?: boolean }) {
-  const { navigate, back, canGoBack, setDraft } = useNav()
+  const { navigate, back, canGoBack, setDraft, locale } = useNav()
   const [query, setQuery] = useState("")
   const [customers, setCustomers] = useState<CustomerResponse[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -365,13 +387,13 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
       })
       .catch((reason: unknown) => {
         if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : "Could not load customers.")
+          setError(reason instanceof Error ? reason.message : t(locale, "couldNotLoadCustomers"))
         }
       })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [locale])
 
   const results = customers.filter(
     (c) =>
@@ -406,23 +428,23 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
     <>
       {picking ? (
         <ScreenHeader
-          title="Select customer"
-          subtitle="Step 1 · Who is this visit for?"
+          title={t(locale, "selectCustomer")}
+          subtitle={t(locale, "stepWhoIsThisFor")}
           onBack={canGoBack ? back : undefined}
           step={1}
           totalSteps={6}
         />
       ) : (
         <PageHeader
-          title="Customers"
-          subtitle={`${customers.length} on file`}
+          title={t(locale, "customersTitle")}
+          subtitle={tPlural(locale, "customersOnFile", customers.length)}
           right={
             <Button
               icon={Plus}
               className="hidden lg:inline-flex"
               onClick={() => navigate("addCustomer", { picking })}
             >
-              Add customer
+              {t(locale, "addCustomer")}
             </Button>
           }
         />
@@ -431,7 +453,7 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
       <Page width={width}>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <SearchField
-            placeholder="Search name or address"
+            placeholder={t(locale, "searchNameOrAddress")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="lg:max-w-sm"
@@ -444,21 +466,21 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
             className={picking ? "" : "lg:hidden"}
             onClick={() => navigate("addCustomer", { picking })}
           >
-            Add new customer
+            {t(locale, "addNewCustomer")}
           </Button>
         </div>
 
         <div className="mt-4">
           {error ? (
-            <EmptyState icon={CircleAlert} title="Could not load customers" description={error} />
+            <EmptyState icon={CircleAlert} title={t(locale, "couldNotLoadCustomers")} description={error} />
           ) : results.length === 0 ? (
             <EmptyState
               icon={UsersIcon}
-              title="No customers yet"
-              description="Add your first customer to start creating reports and tracking visits."
+              title={t(locale, "noCustomersYet")}
+              description={t(locale, "noCustomersYetDesc")}
               action={
                 <Button icon={Plus} onClick={() => navigate("addCustomer", { picking })}>
-                  Add customer
+                  {t(locale, "addCustomer")}
                 </Button>
               }
             />
@@ -490,7 +512,7 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
 /* ------------------------------- PROFILE ------------------------------ */
 
 export function ProfileScreen() {
-  const { navigate, reset, session, setLocale, setSession, locale } = useNav()
+  const { navigate, reset, session, setLocale, setSession, locale, currency: appCurrency, setCurrency } = useNav()
   const [authMethods, setAuthMethods] = useState<AuthMethodsResponse | null>(null)
   const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
@@ -501,10 +523,12 @@ export function ProfileScreen() {
   const [loggingOut, setLoggingOut] = useState(false)
   const [savingLocale, setSavingLocale] = useState(false)
   const [localeError, setLocaleError] = useState("")
-  const userLabel = session ? `User ${session.user_id.slice(0, 8)}` : "Signed-out user"
+  const [savingCurrency, setSavingCurrency] = useState(false)
+  const [currencyError, setCurrencyError] = useState("")
+  const userLabel = session ? `User ${session.user_id.slice(0, 8)}` : t(locale, "signedOutUser")
   const organizationLabel = session
     ? `Organization ${session.organization_id.slice(0, 8)}`
-    : "No organization"
+    : t(locale, "noOrganization")
   const initials = session?.role.slice(0, 2).toUpperCase() ?? "--"
 
   useEffect(() => {
@@ -514,29 +538,29 @@ export function ProfileScreen() {
         if (!cancelled) setAuthMethods(methods)
       })
       .catch(() => {
-        if (!cancelled) setSecurityError("Could not load authentication methods.")
+        if (!cancelled) setSecurityError(t(locale, "couldNotLoadAuthMethods"))
       })
 
     const linkResult = new URLSearchParams(window.location.search).get("auth_link")
     if (linkResult) {
       setSecurityMessage(
         linkResult === "google-success"
-          ? "Google is now linked to this account."
-          : "Google could not be linked. Please try again.",
+          ? t(locale, "googleLinkedMessage")
+          : t(locale, "googleLinkFailedMessage"),
       )
       window.history.replaceState({}, "", window.location.pathname)
     }
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [locale])
 
   async function savePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSecurityError("")
     setSecurityMessage("")
     if (newPassword !== repeatPassword) {
-      setSecurityError("Passwords do not match.")
+      setSecurityError(t(locale, "passwordsDoNotMatch"))
       return
     }
     setSavingPassword(true)
@@ -553,12 +577,12 @@ export function ProfileScreen() {
       setCurrentPassword("")
       setNewPassword("")
       setRepeatPassword("")
-      setSecurityMessage(authMethods?.password ? "Password changed." : "Password added.")
+      setSecurityMessage(authMethods?.password ? t(locale, "passwordChanged") : t(locale, "passwordAdded"))
     } catch (error) {
       setSecurityError(
         error instanceof JobActApiError
           ? error.response.detail
-          : "Could not update the password.",
+          : t(locale, "couldNotUpdatePassword"),
       )
     } finally {
       setSavingPassword(false)
@@ -573,7 +597,7 @@ export function ProfileScreen() {
       reset("signin")
     } catch (error) {
       setSecurityError(
-        error instanceof JobActApiError ? error.response.detail : "Could not sign out.",
+        error instanceof JobActApiError ? error.response.detail : t(locale, "couldNotSignOut"),
       )
       setLoggingOut(false)
     }
@@ -596,30 +620,47 @@ export function ProfileScreen() {
     }
   }
 
+  async function changeCurrency(nextCurrency: AppCurrency) {
+    if (nextCurrency === appCurrency) return
+    const previousCurrency = appCurrency
+    setCurrencyError("")
+    setCurrency(nextCurrency)
+    setSavingCurrency(true)
+    try {
+      await apiFetch<void>("/api/v1/auth/currency", { method: "PUT", body: JSON.stringify({ currency: nextCurrency }) })
+      setSession(session ? { ...session, currency: nextCurrency } : session)
+    } catch {
+      setCurrency(previousCurrency)
+      setCurrencyError(t(locale, "currencySaveError"))
+    } finally {
+      setSavingCurrency(false)
+    }
+  }
+
   const menu: {
     group: string
     items: { label: string; icon: LucideIcon; screen?: Parameters<typeof navigate>[0]; note?: string }[]
   }[] = [
     {
-      group: "Workspace",
+      group: t(locale, "workspaceGroup"),
       items: [
-        { label: "Team & employees", icon: UsersIcon, screen: "customers", note: `${teamMembers.length} people` },
-        { label: "Sync & backups", icon: RefreshCw, screen: "sync" },
-        { label: "Offline mode", icon: WifiOff, screen: "offline" },
+        { label: t(locale, "teamAndEmployees"), icon: UsersIcon, screen: "customers", note: tPlural(locale, "peopleCount", teamMembers.length) },
+        { label: t(locale, "syncAndBackups"), icon: RefreshCw, screen: "sync" },
+        { label: t(locale, "offlineModeItem"), icon: WifiOff, screen: "offline" },
       ],
     },
     {
-      group: "App",
+      group: t(locale, "appGroup"),
       items: [
-        { label: "Permissions & states", icon: CircleAlert, screen: "states" },
-        { label: t(locale, "preferences"), icon: SlidersHorizontal, note: "Units, currency" },
+        { label: t(locale, "permissionsAndStates"), icon: CircleAlert, screen: "states" },
+        { label: t(locale, "preferences"), icon: SlidersHorizontal, note: `${t(locale, "language")} · ${t(locale, "currency")}` },
       ],
     },
   ]
 
   return (
     <>
-      <PageHeader title="Account" subtitle={organizationLabel} width="form" />
+      <PageHeader title={t(locale, "accountTitle")} subtitle={organizationLabel} width="form" />
       <Page width="form">
         <Card className="flex items-center gap-3 p-4 lg:p-5">
           <Avatar initials={initials} className="size-12 rounded-2xl text-base" />
@@ -628,15 +669,15 @@ export function ProfileScreen() {
             <p className="text-xs text-muted-foreground">{organizationLabel}</p>
           </div>
           <span className="shrink-0 rounded-full border border-border bg-muted px-2.5 py-1 text-xs font-medium capitalize text-foreground">
-            {session?.role ?? "signed out"}
+            {session ? roleLabel(locale, session.role) : t(locale, "signedOutRole")}
           </span>
         </Card>
 
         <div className="mt-4 grid grid-cols-3 gap-2.5">
           {[
-            { label: "This month", value: currency(2895) },
-            { label: "Reports", value: "18" },
-            { label: "Signed", value: "94%" },
+            { label: t(locale, "thisMonthStat"), value: formatCurrency(locale, 2895, appCurrency) },
+            { label: t(locale, "reportsStatLabel"), value: "18" },
+            { label: t(locale, "signedStatLabel"), value: "94%" },
           ].map((s) => (
             <Card key={s.label} className="p-3 text-center lg:p-4">
               <p className="font-mono text-lg font-semibold text-foreground lg:text-xl">{s.value}</p>
@@ -659,18 +700,30 @@ export function ProfileScreen() {
               {appLocales.map((option) => <option key={option} value={option}>{t(locale, option === "en-US" ? "english" : "russian")}</option>)}
             </select>
             <p aria-live="polite" className="mt-2 min-h-5 text-xs text-destructive">{savingLocale ? t(locale, "saving") : localeError}</p>
+
+            <label htmlFor="app-currency" className="mt-4 block text-sm font-medium text-foreground">{t(locale, "currency")}</label>
+            <select
+              id="app-currency"
+              value={appCurrency}
+              disabled={savingCurrency}
+              onChange={(event) => changeCurrency(event.target.value as AppCurrency)}
+              className="mt-2 h-10 w-full rounded-xl border border-border bg-card px-3 text-sm text-foreground disabled:opacity-60"
+            >
+              {appCurrencies.map((option) => <option key={option} value={option}>{t(locale, option === "USD" ? "usdOption" : "rubOption")}</option>)}
+            </select>
+            <p aria-live="polite" className="mt-2 min-h-5 text-xs text-destructive">{savingCurrency ? t(locale, "saving") : currencyError}</p>
           </Card>
         </section>
 
         <section className="mt-6">
-          <SectionLabel>Account security</SectionLabel>
+          <SectionLabel>{t(locale, "accountSecurity")}</SectionLabel>
           <Card className="p-4 lg:p-5">
             <div className="flex flex-wrap gap-2 text-xs">
               <span className="rounded-full border border-border px-2.5 py-1 text-foreground">
-                Password {authMethods?.password ? "enabled" : "not set"}
+                {authMethods?.password ? t(locale, "passwordEnabledBadge") : t(locale, "passwordNotSetBadge")}
               </span>
               <span className="rounded-full border border-border px-2.5 py-1 text-foreground">
-                Google {authMethods?.google ? "linked" : "not linked"}
+                {authMethods?.google ? t(locale, "googleLinkedBadge") : t(locale, "googleNotLinkedBadge")}
               </span>
             </div>
 
@@ -678,7 +731,7 @@ export function ProfileScreen() {
               {authMethods?.password && (
                 <Input
                   id="current-password"
-                  label="Current password"
+                  label={t(locale, "currentPasswordLabel")}
                   type="password"
                   autoComplete="current-password"
                   value={currentPassword}
@@ -688,32 +741,32 @@ export function ProfileScreen() {
               )}
               <Input
                 id="new-password"
-                label={authMethods?.password ? "New password" : "Set password"}
+                label={authMethods?.password ? t(locale, "newPasswordLabel") : t(locale, "setPasswordLabel")}
                 type="password"
                 autoComplete="new-password"
                 minLength={12}
                 maxLength={128}
-                hint="Use 12–128 characters."
+                hint={t(locale, "passwordHint")}
                 value={newPassword}
                 onChange={(event) => setNewPassword(event.target.value)}
                 required
               />
               <Input
                 id="repeat-new-password"
-                label="Repeat new password"
+                label={t(locale, "repeatNewPasswordLabel")}
                 type="password"
                 autoComplete="new-password"
                 value={repeatPassword}
                 onChange={(event) => setRepeatPassword(event.target.value)}
                 error={
                   repeatPassword && newPassword !== repeatPassword
-                    ? "Passwords do not match."
+                    ? t(locale, "passwordsDoNotMatch")
                     : undefined
                 }
                 required
               />
               <Button type="submit" icon={KeyRound} disabled={savingPassword}>
-                {savingPassword ? "Saving…" : authMethods?.password ? "Change password" : "Set password"}
+                {savingPassword ? t(locale, "saving") : authMethods?.password ? t(locale, "changePasswordBtn") : t(locale, "setPasswordBtn")}
               </Button>
             </form>
 
@@ -725,7 +778,7 @@ export function ProfileScreen() {
                 className="mt-3"
                 onClick={() => window.location.assign("/api/v1/auth/google/link/start")}
               >
-                Link Google
+                {t(locale, "linkGoogleBtn")}
               </Button>
             )}
             <div aria-live="polite" className="mt-3 min-h-5 text-sm">
@@ -768,9 +821,9 @@ export function ProfileScreen() {
           disabled={loggingOut}
           onClick={signOut}
         >
-          {loggingOut ? "Signing out…" : "Sign out"}
+          {loggingOut ? t(locale, "signingOut") : t(locale, "signOutBtn")}
         </Button>
-        <p className="mt-4 text-xs text-muted-foreground">JobAct v1.0 · Made for the field</p>
+        <p className="mt-4 text-xs text-muted-foreground">{t(locale, "appVersionFooter")}</p>
       </Page>
     </>
   )

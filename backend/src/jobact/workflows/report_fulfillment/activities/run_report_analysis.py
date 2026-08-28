@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from decimal import Decimal
 from time import monotonic
 from uuid import UUID
 
 from jobact.contexts.customers.infrastructure.customer_repository import (
     CustomerRepository,
 )
+from jobact.contexts.identity.infrastructure.user_repository import UserRepository
 from jobact.contexts.media.infrastructure.media_asset_repository import (
     MediaAssetRepository,
 )
@@ -36,16 +38,17 @@ from jobact.contexts.reports.domain.pricing import (
 from jobact.contexts.reports.domain.report import Material, Report
 from jobact.contexts.reports.infrastructure.report_repository import ReportRepository
 from jobact.contexts.visits.infrastructure.visit_repository import VisitRepository
-from jobact.contexts.visual_audits.application.fx import (
-    LocalFxSnapshot,
-    provided_price_usd,
-)
 from jobact.contexts.visual_audits.domain.visual_audit import (
     PhotoPair,
     VisualAuditAttempt,
 )
 from jobact.contexts.visual_audits.infrastructure.visual_audit_repository import (
     VisualAuditRepository,
+)
+from jobact.shared.application.fx import (
+    LocalFxSnapshot,
+    convert_usd_cents,
+    provided_price_usd,
 )
 from jobact.shared.application.ports import (
     AiConnector,
@@ -80,6 +83,11 @@ _TEMPLATE_WORK_COMPLETED = (
 
 _STEP_NAME = "run_report_analysis"
 _MAX_PHOTO_PAIRS = 6
+
+# Maps a user's interface-language preference to the AI-prompt phrase that
+# requests output in that language. Unknown/missing locales fall back to
+# English rather than failing the drafting run over a language lookup.
+_RESPONSE_LANGUAGE_BY_LOCALE = {"en-US": "English", "ru-RU": "Russian"}
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +225,14 @@ class RunReportAnalysisActivity:
             after = await media_repo.list_attached_by_visit_and_phase(visit.id, "after")
 
             revision = report.current_revision
+            creator = (
+                await UserRepository(self._uow.session).get_by_id(revision.created_by)
+                if revision.created_by is not None
+                else None
+            )
+            response_language = _RESPONSE_LANGUAGE_BY_LOCALE.get(
+                creator.locale if creator is not None else "", "English"
+            )
             context = ReportAnalysisContext(
                 raw_notes=raw_notes,
                 customer_name=customer.name,
@@ -229,6 +245,8 @@ class RunReportAnalysisActivity:
                     DraftedMaterial(label=m.label, qty=m.qty) for m in revision.materials
                 ],
                 current_amount_cents=revision.amount_cents,
+                currency=revision.currency,
+                response_language=response_language,
             )
 
             # Readiness was enforced at report creation; assets can still
@@ -356,6 +374,7 @@ class RunReportAnalysisActivity:
                 customer_service_type=context.customer_service_type,
                 gps_lat=context.gps_lat,
                 gps_lon=context.gps_lon,
+                response_language=context.response_language,
             )
             logger.info(
                 "report_ai_request_succeeded report_id=%s run_id=%s "
@@ -407,10 +426,13 @@ class RunReportAnalysisActivity:
                 if audit_result is not None
                 else None
             )
-            _apply_result(
+            revision_currency = report.current_revision.currency
+            converted_amount_cents = _apply_result(
                 report,
                 drafted,
                 self._id_generator,
+                currency=revision_currency,
+                usd_rub_rate=self._fx.usd_rub_rate,
                 visual_comparison_status=(
                     "succeeded" if audit_result is not None else None
                 ),
@@ -428,11 +450,11 @@ class RunReportAnalysisActivity:
                     visit_id=report.visit_id,
                     photo_pairs=list(pair_asset_ids),
                     work_description=drafted.work_completed,
-                    amount_cents=suggested_amount_cents(drafted.estimated_work_units),
-                    currency=SUGGESTED_AMOUNT_CURRENCY,
+                    amount_cents=converted_amount_cents,
+                    currency=revision_currency,
                     provided_price_usd=provided_price_usd(
-                        suggested_amount_cents(drafted.estimated_work_units),
-                        SUGGESTED_AMOUNT_CURRENCY,
+                        converted_amount_cents,
+                        revision_currency,
                         self._fx.usd_rub_rate,
                     ),
                     usd_rub_rate=self._fx.usd_rub_rate,
@@ -520,21 +542,31 @@ def _apply_result(
     drafted: DraftedReport,
     id_generator: IdGenerator,
     *,
+    currency: str,
+    usd_rub_rate: Decimal,
     visual_comparison_status: str | None,
     visual_comparison: dict | None,
-) -> None:
+) -> int | None:
+    """Apply the drafted result to `report`, converting the deterministic
+    USD base amount into `currency` (the revision's snapshotted currency,
+    never touched here -- see `Report.apply_ai_unified_result`). Returns
+    the converted amount so the caller can reuse it for the
+    `VisualAuditAttempt` record without recomputing.
+    """
+    base_usd_cents = suggested_amount_cents(drafted.estimated_work_units)
+    converted_amount_cents = convert_usd_cents(base_usd_cents, currency, usd_rub_rate)
     report.apply_ai_unified_result(
         work_completed=drafted.work_completed,
         materials=[
             Material(id=id_generator.new_id(), label=material.label, qty=material.qty)
             for material in drafted.materials
         ],
-        amount_cents=suggested_amount_cents(drafted.estimated_work_units),
-        currency=SUGGESTED_AMOUNT_CURRENCY,
+        amount_cents=converted_amount_cents,
         ai_confidence=drafted.confidence,
         visual_comparison_status=visual_comparison_status,
         visual_comparison=visual_comparison,
     )
+    return converted_amount_cents
 
 
 def _template_fallback() -> DraftedReport:

@@ -54,6 +54,7 @@ class RegisterWithPasswordHandler:
                 family_name="",
                 avatar_url=None,
                 locale="en-US",
+                currency="RUB",
                 timezone="UTC",
                 registered_at=now,
             )

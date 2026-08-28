@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react"
 import type { ReportResponse } from "@/lib/jobact/api"
-import type { AppLocale } from "@/lib/jobact/i18n"
+import type { AppCurrency, AppLocale } from "@/lib/jobact/i18n"
 
 export type Screen =
   | "splash"
@@ -61,6 +61,8 @@ interface NavContext {
   setSession: (session: Session | null) => void
   locale: AppLocale
   setLocale: (locale: AppLocale) => void
+  currency: AppCurrency
+  setCurrency: (currency: AppCurrency) => void
 }
 
 export interface Session {
@@ -68,6 +70,7 @@ export interface Session {
   organization_id: string
   role: string
   locale: AppLocale
+  currency: AppCurrency
 }
 
 export interface DraftState {
@@ -113,6 +116,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
   const [draft, setDraftState] = useState<DraftState>(initialDraft)
   const [session, setSession] = useState<Session | null>(null)
   const [locale, setLocale] = useState<AppLocale>("en-US")
+  const [currency, setCurrency] = useState<AppCurrency>("RUB")
 
   const navigate = useCallback((screen: Screen, params: NavParams = {}) => {
     setStack((current) => [...current, { screen, params }])
@@ -148,8 +152,10 @@ export function NavProvider({ children }: { children: ReactNode }) {
       setSession,
       locale,
       setLocale,
+      currency,
+      setCurrency,
     }
-  }, [back, draft, locale, navigate, replace, reset, session, setDraft, setSession, stack])
+  }, [back, currency, draft, locale, navigate, replace, reset, session, setDraft, setSession, stack])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

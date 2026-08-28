@@ -108,6 +108,7 @@ async def test_analysis_fails_over_to_second_provider_for_the_whole_saga() -> No
                 "customer_service_type": None,
                 "gps_lat": None,
                 "gps_lon": None,
+                "response_language": "English",
             },
         )(),
         image_pairs=[(b"before", "image/jpeg", b"after", "image/jpeg")],

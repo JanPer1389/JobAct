@@ -15,7 +15,7 @@ import {
 } from "lucide-react"
 import type { ReactNode } from "react"
 import { useNav, type Screen } from "@/lib/jobact/store"
-import { t } from "@/lib/jobact/i18n"
+import { roleLabel, t, type AppLocale } from "@/lib/jobact/i18n"
 import { CURRENT_USER, reports as allReports } from "@/lib/jobact/data"
 import { Logo } from "./ui"
 import { Avatar } from "./cards"
@@ -56,17 +56,28 @@ interface NavItem {
   icon: LucideIcon
 }
 
-const workspaceNav: NavItem[] = [
-  { screen: "home", label: "Overview", icon: House },
-  { screen: "reports", label: "Reports", icon: FileText },
-  { screen: "customers", label: "Customers", icon: Users },
+const workspaceNav: { screen: Screen; icon: LucideIcon }[] = [
+  { screen: "home", icon: House },
+  { screen: "reports", icon: FileText },
+  { screen: "customers", icon: Users },
 ]
 
-const operationsNav: NavItem[] = [
-  { screen: "sync", label: "Sync & backups", icon: RefreshCw },
-  { screen: "offline", label: "Offline queue", icon: WifiOff },
-  { screen: "states", label: "Permissions", icon: CircleAlert },
+const operationsNav: { screen: Screen; icon: LucideIcon }[] = [
+  { screen: "sync", icon: RefreshCw },
+  { screen: "offline", icon: WifiOff },
+  { screen: "states", icon: CircleAlert },
 ]
+
+function operationsLabel(locale: AppLocale, screen: Screen): string {
+  switch (screen) {
+    case "sync":
+      return t(locale, "syncAndBackups")
+    case "offline":
+      return t(locale, "offlineQueue")
+    default:
+      return t(locale, "permissionsNav")
+  }
+}
 
 function Sidebar({ active }: { active: Screen }) {
   const { reset, navigate, locale } = useNav()
@@ -93,10 +104,18 @@ function Sidebar({ active }: { active: Screen }) {
       </div>
 
       <nav className="mt-7 flex min-h-0 flex-1 flex-col gap-7 overflow-y-auto px-4 pb-4">
-        <NavGroup label={t(locale, "workspace")} items={workspaceNav.map((item) => ({ ...item, label: t(locale, item.screen === "home" ? "overview" : item.screen === "reports" ? "reports" : "customers") }))} active={active} onSelect={reset} />
+        <NavGroup
+          label={t(locale, "workspace")}
+          items={workspaceNav.map((item) => ({
+            ...item,
+            label: t(locale, item.screen === "home" ? "overview" : item.screen === "reports" ? "reports" : "customers"),
+          }))}
+          active={active}
+          onSelect={reset}
+        />
         <NavGroup
           label={t(locale, "operations")}
-          items={operationsNav}
+          items={operationsNav.map((item) => ({ ...item, label: operationsLabel(locale, item.screen) }))}
           active={active}
           onSelect={reset}
           badges={{ sync: pendingSync || undefined }}
@@ -113,7 +132,7 @@ function Sidebar({ active }: { active: Screen }) {
         <Avatar initials={CURRENT_USER.initials} className="size-9 rounded-lg text-xs" />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-foreground">{CURRENT_USER.name}</span>
-          <span className="block truncate text-xs capitalize text-muted-foreground">{CURRENT_USER.role}</span>
+          <span className="block truncate text-xs text-muted-foreground">{roleLabel(locale, CURRENT_USER.role)}</span>
         </span>
         <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
       </button>
@@ -175,32 +194,46 @@ function NavGroup({
 /*  Bottom tab bar (below lg)                                          */
 /* ------------------------------------------------------------------ */
 
-const tabs: NavItem[] = [
-  { screen: "home", label: "Home", icon: House },
-  { screen: "reports", label: "Reports", icon: FileText },
-  { screen: "customers", label: "Customers", icon: Users },
-  { screen: "profile", label: "More", icon: User },
+const tabScreens: { screen: Screen; icon: LucideIcon }[] = [
+  { screen: "home", icon: House },
+  { screen: "reports", icon: FileText },
+  { screen: "customers", icon: Users },
+  { screen: "profile", icon: User },
 ]
 
+function tabLabel(locale: AppLocale, screen: Screen): string {
+  switch (screen) {
+    case "home":
+      return t(locale, "home")
+    case "reports":
+      return t(locale, "reports")
+    case "customers":
+      return t(locale, "customers")
+    default:
+      return t(locale, "more")
+  }
+}
+
 export function BottomNav({ active }: { active: Screen }) {
-  const { reset, navigate } = useNav()
+  const { reset, navigate, locale } = useNav()
+  const tabs: NavItem[] = tabScreens.map((tab) => ({ ...tab, label: tabLabel(locale, tab.screen) }))
   return (
     <nav className="relative shrink-0 border-t border-border bg-background/90 backdrop-blur-xl lg:hidden">
       <div className="grid grid-cols-5 items-end px-2 pb-6 pt-2">
-        {tabs.slice(0, 2).map((t) => (
-          <TabButton key={t.screen} tab={t} active={active} onClick={() => reset(t.screen)} />
+        {tabs.slice(0, 2).map((tab) => (
+          <TabButton key={tab.screen} tab={tab} active={active} onClick={() => reset(tab.screen)} />
         ))}
         <div className="flex justify-center">
           <button
-            aria-label="Create report"
+            aria-label={t(locale, "createReportAction")}
             onClick={() => navigate("customers", { picking: true })}
             className="grid size-14 -translate-y-3 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-black/40 transition-transform active:scale-95"
           >
             <Plus className="size-6" strokeWidth={2.5} />
           </button>
         </div>
-        {tabs.slice(2).map((t) => (
-          <TabButton key={t.screen} tab={t} active={active} onClick={() => reset(t.screen)} />
+        {tabs.slice(2).map((tab) => (
+          <TabButton key={tab.screen} tab={tab} active={active} onClick={() => reset(tab.screen)} />
         ))}
       </div>
     </nav>

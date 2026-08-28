@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from jobact.contexts.visual_audits.application.fx import LocalFxSnapshot
+from jobact.shared.application.fx import LocalFxSnapshot
 from jobact.shared.infrastructure.clock import SystemClock
 from jobact.shared.infrastructure.config import get_settings
 from jobact.shared.infrastructure.id_generator import UuidIdGenerator

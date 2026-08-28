@@ -77,6 +77,7 @@ class SignInWithGoogleHandler:
             family_name="",
             avatar_url=external_identity.picture,
             locale="en-US",
+            currency="RUB",
             timezone="UTC",
             registered_at=now,
         )
