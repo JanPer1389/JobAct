@@ -65,7 +65,7 @@ def test_report_state_machine_enforces_signing_and_revision_invariants() -> None
 def test_low_confidence_ai_draft_does_not_preserve_an_amount() -> None:
     report = make_draft()
 
-    report.apply_ai_draft(
+    report.apply_ai_unified_result(
         work_completed="Replaced the damaged kitchen sink drain and tested for leaks.",
         materials=[],
         amount_cents=12_500,

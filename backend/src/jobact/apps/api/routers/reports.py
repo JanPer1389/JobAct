@@ -3,11 +3,13 @@ contract. Routes stay thin: parse the request DTO, call a handler,
 map the aggregate back to a response DTO.
 """
 
+import logging
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, Depends, Request
 
 from jobact.apps.api.deps import CurrentPrincipal, get_current_principal
+from jobact.apps.api.middleware.correlation import get_correlation_id
 from jobact.contexts.media.infrastructure.media_asset_repository import (
     MediaAssetRepository,
 )
@@ -18,6 +20,7 @@ from jobact.contexts.reports.application.report_handlers import (
     GetReportManualRecoveryHandler,
     ListReportsHandler,
     ReadyForSignatureHandler,
+    RetryReportWorkflowHandler,
     SignReportHandler,
     UpdateReportRevisionHandler,
 )
@@ -30,18 +33,18 @@ from jobact.contracts.http.v1.reports import (
     ReportRevisionResponse,
     SignReportRequest,
     UpdateReportRevisionRequest,
+    WorkflowErrorResponse,
 )
+from jobact.contracts.http.v1.visual_audits import VisualAuditResult
 from jobact.shared.infrastructure.clock import SystemClock
 from jobact.shared.infrastructure.id_generator import UuidIdGenerator
 from jobact.shared.infrastructure.postgres.uow import SqlAlchemyUnitOfWork
-from jobact.workflows.report_fulfillment.drafting_dispatcher import (
-    generate_draft_for_report,
-)
-from jobact.workflows.report_fulfillment.pdf_dispatcher import generate_pdf_for_report
+from jobact.workflows.report_fulfillment.failures import failure_from_code
 from jobact.workflows.report_fulfillment.repository import WorkflowRunRepository
 from jobact.workflows.report_fulfillment.states import WorkflowState
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+logger = logging.getLogger(__name__)
 
 
 def _to_response(
@@ -49,6 +52,7 @@ def _to_response(
     *,
     workflow_state: WorkflowState | None = None,
     pdf_media_asset_id: UUID | None = None,
+    workflow_error: WorkflowErrorResponse | None = None,
 ) -> ReportResponse:
     revision = report.current_revision
     return ReportResponse(
@@ -70,10 +74,17 @@ def _to_response(
             materials=[
                 MaterialDto(label=m.label, qty=m.qty) for m in revision.materials
             ],
+            visual_comparison_status=revision.visual_comparison_status,
+            visual_comparison=(
+                VisualAuditResult.model_validate(revision.visual_comparison)
+                if revision.visual_comparison is not None
+                else None
+            ),
         ),
         signed_at=report.signed_at,
         completed_at=report.completed_at,
         workflow_state=workflow_state,
+        workflow_error=workflow_error,
         pdf_media_asset_id=pdf_media_asset_id,
     )
 
@@ -84,9 +95,20 @@ async def _to_enriched_response(report: Report) -> ReportResponse:
         pdf_asset = await MediaAssetRepository(
             uow.session
         ).get_attached_pdf_by_report(report.id)
+    failure = failure_from_code(run.last_error if run is not None else None)
     return _to_response(
         report,
         workflow_state=run.state if run is not None else None,
+        workflow_error=(
+            WorkflowErrorResponse(
+                code=failure.code,
+                http_status=failure.http_status,
+                message=failure.message,
+                retryable=failure.retryable,
+            )
+            if failure is not None
+            else None
+        ),
         pdf_media_asset_id=pdf_asset.id if pdf_asset is not None else None,
     )
 
@@ -94,20 +116,40 @@ async def _to_enriched_response(report: Report) -> ReportResponse:
 @router.post("", response_model=ReportResponse, status_code=201)
 async def create_report(
     body: CreateReportRequest,
-    background_tasks: BackgroundTasks,
+    request: Request,
     principal: CurrentPrincipal = Depends(get_current_principal),
 ) -> ReportResponse:
+    correlation_id = get_correlation_id(request)
     handler = CreateReportHandler(
         uow=SqlAlchemyUnitOfWork(), clock=SystemClock(), id_generator=UuidIdGenerator()
     )
-    report = await handler.handle(
+    created = await handler.handle(
         organization_id=principal.organization_id,
         visit_id=body.visit_id,
         created_by=principal.user_id,
         raw_notes=body.raw_notes,
+        correlation_id=correlation_id,
     )
-    background_tasks.add_task(generate_draft_for_report, report.id)
-    return _to_response(report, workflow_state=WorkflowState.DRAFTING_PENDING)
+    logger.info(
+        "report_workflow_created report_id=%s workflow_run_id=%s organization_id=%s "
+        "state=%s correlation_id=%s",
+        created.report.id,
+        created.workflow_run_id,
+        principal.organization_id,
+        WorkflowState.DRAFTING_PENDING.value,
+        correlation_id,
+    )
+    # The dispatch request committed to the outbox in the same transaction
+    # as the run, so the worker picks it up even if this process restarts.
+    logger.info(
+        "report_workflow_enqueued report_id=%s workflow_run_id=%s correlation_id=%s",
+        created.report.id,
+        created.workflow_run_id,
+        correlation_id,
+    )
+    return _to_response(
+        created.report, workflow_state=WorkflowState.DRAFTING_PENDING
+    )
 
 
 @router.get("", response_model=list[ReportResponse])
@@ -140,7 +182,21 @@ async def get_report_manual_recovery(
     recovery_input = await handler.handle(
         report_id=report_id, organization_id=principal.organization_id
     )
-    return ManualRecoveryResponse(raw_notes=recovery_input.raw_notes)
+    return ManualRecoveryResponse(
+        raw_notes=recovery_input.raw_notes, stage=recovery_input.stage
+    )
+
+
+@router.post("/{report_id}/retry", response_model=ReportResponse)
+async def retry_report_workflow(
+    report_id: UUID,
+    principal: CurrentPrincipal = Depends(get_current_principal),
+) -> ReportResponse:
+    handler = RetryReportWorkflowHandler(uow=SqlAlchemyUnitOfWork())
+    report = await handler.handle(
+        report_id=report_id, organization_id=principal.organization_id
+    )
+    return await _to_enriched_response(report)
 
 
 @router.patch("/{report_id}/revision", response_model=ReportResponse)
@@ -194,7 +250,6 @@ async def sign_report(
     report_id: UUID,
     body: SignReportRequest,
     request: Request,
-    background_tasks: BackgroundTasks,
     principal: CurrentPrincipal = Depends(get_current_principal),
 ) -> ReportResponse:
     handler = SignReportHandler(
@@ -208,5 +263,4 @@ async def sign_report(
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
-    background_tasks.add_task(generate_pdf_for_report, report.id)
     return _to_response(report, workflow_state=WorkflowState.PDF_PENDING)

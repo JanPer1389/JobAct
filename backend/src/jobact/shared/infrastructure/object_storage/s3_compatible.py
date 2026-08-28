@@ -18,13 +18,17 @@ class S3CompatibleObjectStorage:
         self._settings = settings
         self._session = aioboto3.Session()
 
-    def _client_ctx(self):
+    def _client_ctx(self, *, endpoint_url: str | None = None):
         return self._session.client(
             "s3",
-            endpoint_url=self._settings.minio_endpoint_url,
+            endpoint_url=endpoint_url or self._settings.minio_endpoint_url,
             aws_access_key_id=self._settings.minio_access_key,
             aws_secret_access_key=self._settings.minio_secret_key,
-            config=Config(signature_version="s3v4"),
+            config=Config(
+                signature_version="s3v4",
+                connect_timeout=self._settings.object_storage_connect_timeout_seconds,
+                read_timeout=self._settings.object_storage_read_timeout_seconds,
+            ),
         )
 
     async def presigned_put(
@@ -34,7 +38,9 @@ class S3CompatibleObjectStorage:
         ttl_seconds: int,
         metadata: dict[str, str] | None = None,
     ) -> str:
-        async with self._client_ctx() as client:
+        async with self._client_ctx(
+            endpoint_url=self._settings.minio_public_endpoint_url
+        ) as client:
             return await client.generate_presigned_url(
                 "put_object",
                 Params={
@@ -47,7 +53,9 @@ class S3CompatibleObjectStorage:
             )
 
     async def presigned_get(self, key: str, ttl_seconds: int) -> str:
-        async with self._client_ctx() as client:
+        async with self._client_ctx(
+            endpoint_url=self._settings.minio_public_endpoint_url
+        ) as client:
             return await client.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": self._settings.minio_bucket_name, "Key": key},

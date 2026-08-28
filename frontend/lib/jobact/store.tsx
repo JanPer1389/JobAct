@@ -8,7 +8,8 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import type { ReportResponse, VisualAuditAttemptResponse } from "@/lib/jobact/api"
+import type { ReportResponse } from "@/lib/jobact/api"
+import type { AppLocale } from "@/lib/jobact/i18n"
 
 export type Screen =
   | "splash"
@@ -20,11 +21,9 @@ export type Screen =
   | "visitStart"
   | "gps"
   | "beforePhotos"
-  | "voice"
-  | "voiceProcessing"
+  | "notes"
   | "afterPhotos"
-  | "auditProcessing"
-  | "auditResult"
+  | "analysisProcessing"
   | "reportDraft"
   | "editReport"
   | "signature"
@@ -60,20 +59,26 @@ interface NavContext {
   setDraft: (patch: Partial<DraftState>) => void
   session: Session | null
   setSession: (session: Session | null) => void
+  locale: AppLocale
+  setLocale: (locale: AppLocale) => void
 }
 
 export interface Session {
   user_id: string
   organization_id: string
   role: string
+  locale: AppLocale
 }
 
 export interface DraftState {
   customerId?: string
   customerName?: string
   address?: string
-  beforePhotos: number
-  afterPhotos: number
+  gpsLat?: number
+  gpsLon?: number
+  gpsAccuracyM?: number
+  // Real attached uploads -- the backend derives readiness and the
+  // before/after comparison from these, not from a count.
   beforePhotoAssets: DraftPhoto[]
   afterPhotoAssets: DraftPhoto[]
   workCompleted: string
@@ -85,7 +90,6 @@ export interface DraftState {
   signatureAssetId?: string
   rawNotes: string
   report?: ReportResponse
-  audit?: VisualAuditAttemptResponse
 }
 
 export interface DraftPhoto {
@@ -94,8 +98,6 @@ export interface DraftPhoto {
 }
 
 const initialDraft: DraftState = {
-  beforePhotos: 0,
-  afterPhotos: 0,
   beforePhotoAssets: [],
   afterPhotoAssets: [],
   workCompleted: "",
@@ -110,6 +112,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
   const [stack, setStack] = useState<Frame[]>([{ screen: "splash", params: {} }])
   const [draft, setDraftState] = useState<DraftState>(initialDraft)
   const [session, setSession] = useState<Session | null>(null)
+  const [locale, setLocale] = useState<AppLocale>("en-US")
 
   const navigate = useCallback((screen: Screen, params: NavParams = {}) => {
     setStack((current) => [...current, { screen, params }])
@@ -143,8 +146,10 @@ export function NavProvider({ children }: { children: ReactNode }) {
       setDraft,
       session,
       setSession,
+      locale,
+      setLocale,
     }
-  }, [back, draft, navigate, replace, reset, session, setDraft, setSession, stack])
+  }, [back, draft, locale, navigate, replace, reset, session, setDraft, setSession, stack])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

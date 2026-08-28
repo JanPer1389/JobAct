@@ -66,17 +66,46 @@ export interface ReportResponse {
     amount_confirmed_at: string | null
     frozen_at: string | null
     materials: ReportMaterial[]
+    visual_comparison_status: string | null
+    visual_comparison: VisualAuditResult | null
   }
   signed_at: string | null
   completed_at: string | null
-  workflow_state: string | null
+  workflow_state: WorkflowState | null
+  workflow_error: {
+    code: string
+    http_status: number
+    message: string
+    retryable: boolean
+  } | null
   pdf_media_asset_id: string | null
+}
+
+export type WorkflowState =
+  | "COLLECTING_EVIDENCE"
+  | "DRAFTING_PENDING"
+  | "REVIEW_PENDING"
+  | "SIGNATURE_PENDING"
+  | "FINALIZATION_PENDING"
+  | "PDF_PENDING"
+  | "COMPLETED"
+  | "MANUAL_INPUT_REQUIRED"
+  | "FAILED"
+
+export interface ManualRecoveryResponse {
+  raw_notes: string
+  stage: "analysis" | "pdf"
 }
 
 export interface MediaUploadResponse {
   media_asset_id: string
   upload_url: string
   expires_at: string
+}
+
+export interface AuthMethodsResponse {
+  password: boolean
+  google: boolean
 }
 
 export interface VisualAuditResult {
@@ -103,29 +132,6 @@ export interface VisualAuditResult {
   evidence: Array<{ observation: string; impact: string }>
   limitations: string[]
   recommended_next_steps: string[]
-}
-
-export interface VisualAuditAttemptResponse {
-  id: string
-  report_id: string
-  report_revision_id: string
-  status: "pending" | "running" | "succeeded" | "failed"
-  before_photo_asset_ids: string[]
-  after_photo_asset_ids: string[]
-  amount_cents: number | null
-  currency: string
-  provided_price_usd: number | null
-  usd_rub_rate: number
-  usd_rub_rate_date: string
-  usd_rub_rate_source: string
-  result: VisualAuditResult | null
-  model: string | null
-  failure_code: string | null
-  created_at: string
-  started_at: string | null
-  completed_at: string | null
-  acknowledged_at: string | null
-  acknowledgement_reason: "result_reviewed" | "continued_without_result" | null
 }
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"])

@@ -46,10 +46,11 @@ import {
   type CustomerResponse,
   type MediaUploadResponse,
   type ReportResponse,
-  type VisualAuditAttemptResponse,
   type VisitResponse,
 } from "@/lib/jobact/api"
+import { pollReportUntilState } from "@/lib/jobact/polling"
 import { uploadVisitPhoto } from "@/lib/jobact/media"
+import { analysisInputKey } from "@/lib/jobact/analysis-run"
 import type { SignatureCanvasHandle } from "../ui"
 
 function useCustomer() {
@@ -104,11 +105,8 @@ export function AddCustomerScreen() {
         signatureAssetId: undefined,
         rawNotes: "",
         report: undefined,
-        beforePhotos: 0,
-        afterPhotos: 0,
         beforePhotoAssets: [],
         afterPhotoAssets: [],
-        audit: undefined,
         workCompleted: "",
         amount: "",
         signed: false,
@@ -285,7 +283,7 @@ function describeLocationError(err: unknown): string {
 }
 
 export function GpsScreen() {
-  const { back, navigate, frame, draft } = useNav()
+  const { back, navigate, frame, draft, setDraft } = useNav()
   const [state, setState] = useState<"locating" | "found" | "error">("locating")
   const [point, setPoint] = useState<GeoPoint | null>(null)
   const [locateError, setLocateError] = useState<string | null>(null)
@@ -326,6 +324,7 @@ export function GpsScreen() {
           gps_accuracy_m: point.accuracy,
         }),
       })
+      setDraft({ gpsLat: point.lat, gpsLon: point.lon, gpsAccuracyM: point.accuracy })
       navigate("beforePhotos", frame.params)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save location.")
@@ -433,10 +432,8 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
   const { back, navigate, frame, draft, setDraft } = useNav()
   const photos = phase === "before" ? draft.beforePhotoAssets : draft.afterPhotoAssets
   const maxPhotos = phase === "before" ? 6 : draft.beforePhotoAssets.length
-  const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const photosKey = useRef(crypto.randomUUID())
   const inputRef = useRef<HTMLInputElement>(null)
 
   async function addFiles(files: FileList | null) {
@@ -448,9 +445,9 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
       for (const file of Array.from(files).slice(0, maxPhotos - photos.length)) {
         next = [...next, await uploadVisitPhoto(file, phase, draft.visitId)]
         if (phase === "before") {
-          setDraft({ beforePhotoAssets: next, beforePhotos: next.length })
+          setDraft({ beforePhotoAssets: next })
         } else {
-          setDraft({ afterPhotoAssets: next, afterPhotos: next.length })
+          setDraft({ afterPhotoAssets: next })
         }
       }
     } catch (reason) {
@@ -465,44 +462,22 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
     const next = photos.filter((_, photoIndex) => photoIndex !== index)
     URL.revokeObjectURL(photos[index].previewUrl)
     if (phase === "before") {
-      setDraft({
-        beforePhotoAssets: next,
-        beforePhotos: next.length,
-        afterPhotoAssets: [],
-        afterPhotos: 0,
-        audit: undefined,
-      })
+      // After photos are paired to before photos by position, so removing a
+      // before photo invalidates the pairing that was already captured.
+      setDraft({ beforePhotoAssets: next, afterPhotoAssets: [] })
     } else {
-      setDraft({ afterPhotoAssets: next, afterPhotos: next.length, audit: undefined })
+      setDraft({ afterPhotoAssets: next })
     }
   }
 
   const step = phase === "before" ? 3 : 5
   const title = phase === "before" ? "Before photos" : "After photos"
-  const next = phase === "before" ? "voice" : "auditProcessing"
+  const next = phase === "before" ? "notes" : "analysisProcessing"
   const count = photos.length
   const pairCountValid = phase === "before" ? count >= 1 : count === draft.beforePhotoAssets.length
 
-  async function continueFlow() {
-    if (!draft.visitId) return
-    setSaving(true)
-    setError(null)
-    try {
-      await apiFetch<VisitResponse>(`/api/v1/visits/${draft.visitId}`, {
-        method: "PATCH",
-        headers: { "Idempotency-Key": photosKey.current },
-        body: JSON.stringify(
-          phase === "before"
-            ? { before_photo_count: count }
-            : { after_photo_count: count },
-        ),
-      })
-      navigate(next, frame.params)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save photo count.")
-    } finally {
-      setSaving(false)
-    }
+  function continueFlow() {
+    navigate(next, frame.params)
   }
 
   return (
@@ -572,177 +547,245 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
-        <Button size="lg" fullWidth iconRight={ArrowRight} disabled={!pairCountValid || saving || uploading} onClick={continueFlow}>
-          {phase === "after" ? "Start visual audit" : "Continue"}
+        <Button size="lg" fullWidth iconRight={ArrowRight} disabled={!pairCountValid || uploading} onClick={continueFlow}>
+          {phase === "after" ? "Start AI analysis" : "Continue"}
         </Button>
       </FlowFooter>
     </>
   )
 }
 
-/* ------------------------------- VOICE -------------------------------- */
+/* ------------------------------- NOTES -------------------------------- */
 
-export function VoiceScreen() {
-  const { back, navigate, frame, setDraft } = useNav()
-  const [recording, setRecording] = useState(false)
-  const [seconds, setSeconds] = useState(0)
+export function NotesScreen() {
+  const { back, navigate, frame, draft, setDraft } = useNav()
+  const [notes, setNotes] = useState(draft.rawNotes)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const notesKey = useRef(crypto.randomUUID())
+  const tooShort = notes.trim().length < 20
 
-  useEffect(() => {
-    if (!recording) return
-    const t = setInterval(() => setSeconds((s) => s + 1), 1000)
-    return () => clearInterval(t)
-  }, [recording])
-
-  const mm = String(Math.floor(seconds / 60)).padStart(2, "0")
-  const ss = String(seconds % 60).padStart(2, "0")
+  async function saveNotes() {
+    if (!draft.visitId || tooShort) return
+    setSaving(true)
+    setError(null)
+    try {
+      await apiFetch<VisitResponse>(`/api/v1/visits/${draft.visitId}`, {
+        method: "PATCH",
+        headers: { "Idempotency-Key": notesKey.current },
+        body: JSON.stringify({ raw_notes: notes }),
+      })
+      setDraft({ rawNotes: notes })
+      navigate("afterPhotos", frame.params)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save your notes.")
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <>
-      <ScreenHeader title="Describe the work" subtitle="Step 4 · Speak, don't type" onBack={back} step={4} totalSteps={6} />
-      <Page width="form" className="flex flex-col items-center lg:py-10">
-        <div className="text-center">
+      <ScreenHeader
+        title="Describe the work"
+        subtitle="Step 4 · What did you complete?"
+        onBack={back}
+        step={4}
+        totalSteps={6}
+      />
+      <Page width="form">
+        <div>
           <h2 className="text-lg font-semibold text-foreground text-balance">
             What did you do on this visit?
           </h2>
           <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground text-pretty">
-            Mention what you repaired or serviced and any materials used. We&apos;ll turn it into a clean report.
+            Mention what you repaired or serviced, any materials used, and the amount
+            charged. The AI turns this and your photos into one report.
           </p>
         </div>
 
-        {/* waveform */}
-        <div className="mt-10 flex h-24 items-center justify-center gap-1">
-          {Array.from({ length: 28 }).map((_, i) => (
-            <span
-              key={i}
-              className={"w-1 rounded-full " + (recording ? "bg-foreground" : "bg-border")}
-              style={{
-                height: recording ? `${12 + Math.abs(Math.sin(i * 0.9 + seconds)) * 56}px` : "12px",
-                transition: "height 0.2s ease",
-              }}
-            />
-          ))}
-        </div>
-
-        <p className="mt-4 font-mono text-2xl font-semibold tabular-nums text-foreground">
-          {mm}:{ss}
+        <label className="mt-5 block">
+          <span className="mb-1.5 block text-sm font-medium text-muted-foreground">
+            Work notes
+          </span>
+          <textarea
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+            rows={8}
+            autoFocus
+            placeholder="e.g. Diagnosed an intermittent compressor fault. Replaced the start capacitor and cleaned the contactor points. Used one 45uF capacitor. Charged 160."
+            className="w-full resize-none rounded-xl border border-input bg-card p-4 text-sm leading-relaxed text-foreground focus:border-ring focus:outline-none"
+          />
+        </label>
+        <p className="mt-2 text-xs text-muted-foreground">
+          {tooShort
+            ? "Add a little more detail — at least 20 characters."
+            : "Rough notes are fine; the AI cleans them up."}
         </p>
-        <p className="text-xs text-muted-foreground">{recording ? "Recording…" : "Tap to start recording"}</p>
-
-        <button
-          onClick={() => setRecording((r) => !r)}
-          aria-label={recording ? "Stop recording" : "Start recording"}
-          className={
-            "mt-8 grid size-20 place-items-center rounded-full transition-all active:scale-95 " +
-            (recording
-              ? "bg-destructive text-destructive-foreground shadow-lg shadow-destructive/30"
-              : "bg-primary text-primary-foreground shadow-lg shadow-black/30")
-          }
-        >
-          {recording ? <span className="size-6 rounded-md bg-current" /> : <Mic className="size-8" />}
-        </button>
-
-        <button
-          onClick={() => navigate("editReport", { ...frame.params, manual: true })}
-          className="mt-8 text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
-        >
-          Type it instead
-        </button>
+        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
         <Button
           size="lg"
           fullWidth
           iconRight={ArrowRight}
-          disabled={seconds < 1}
-          onClick={() => {
-            setDraft({
-              rawNotes:
-                "Diagnosed an intermittent compressor fault. Replaced the start capacitor, cleaned the contactor points, and verified stable operation. Used one 45uF capacitor and contact cleaner. Charged 160 dollars.",
-            })
-            navigate("voiceProcessing", frame.params)
-          }}
+          disabled={tooShort || saving}
+          onClick={saveNotes}
         >
-          Use recording
+          {saving ? "Saving…" : "Continue"}
         </Button>
       </FlowFooter>
     </>
   )
 }
 
-/* -------------------------- VOICE PROCESSING -------------------------- */
+/* ------------------------- ANALYSIS PROCESSING ------------------------ */
 
-export function VoiceProcessingScreen() {
-  const { navigate, frame, draft, setDraft } = useNav()
-  const steps = ["Transcribing your note", "Structuring the report", "Detecting materials & amount"]
+const ANALYSIS_STEPS = [
+  "Uploading visit evidence",
+  "Drafting the work report",
+  "Comparing before & after photos",
+]
+
+export function AnalysisProcessingScreen() {
+  const { navigate, replace, reset, frame, draft, setDraft } = useNav()
   const [active, setActive] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const started = useRef(false)
-  const notesKey = useRef(crypto.randomUUID())
+  const [attempt, setAttempt] = useState(0)
   const reportKey = useRef(crypto.randomUUID())
+  const analysisKey = analysisInputKey({
+    visitId: draft.visitId,
+    rawNotes: draft.rawNotes,
+    beforePhotoCount: draft.beforePhotoAssets.length,
+    afterPhotoCount: draft.afterPhotoAssets.length,
+  })
+  const navigation = useRef({ draft, frameParams: frame.params, replace, setDraft })
+  navigation.current = { draft, frameParams: frame.params, replace, setDraft }
 
   useEffect(() => {
-    if (started.current) return
-    started.current = true
-    let cancelled = false
+    const controller = new AbortController()
+    const current = navigation.current
+    const currentDraft = current.draft
 
-    async function buildReport() {
-      if (!draft.visitId || !draft.rawNotes) {
+    async function runAnalysis() {
+      if (!currentDraft.visitId || !currentDraft.rawNotes) {
         throw new Error("Visit notes are missing.")
       }
+      if (
+        currentDraft.beforePhotoAssets.length === 0 ||
+        currentDraft.beforePhotoAssets.length !== currentDraft.afterPhotoAssets.length
+      ) {
+        throw new Error("Before and after photos must form equal pairs.")
+      }
+
       setActive(1)
-      await apiFetch<VisitResponse>(`/api/v1/visits/${draft.visitId}`, {
-        method: "PATCH",
-        headers: { "Idempotency-Key": notesKey.current },
-        body: JSON.stringify({ raw_notes: draft.rawNotes }),
-      })
-      const created = await apiFetch<ReportResponse>("/api/v1/reports", {
-        method: "POST",
-        headers: { "Idempotency-Key": reportKey.current },
-        body: JSON.stringify({ visit_id: draft.visitId, raw_notes: draft.rawNotes }),
-      })
-      if (cancelled) return
-      setDraft({
+      // Returns as soon as the job is durably queued; the worker does the
+      // AI work, so this never waits on a model call.
+      const created =
+        currentDraft.reportId && currentDraft.report?.workflow_state === "FAILED"
+          ? await apiFetch<ReportResponse>(`/api/v1/reports/${currentDraft.reportId}/retry`, {
+              method: "POST",
+            })
+          : await apiFetch<ReportResponse>("/api/v1/reports", {
+              method: "POST",
+              headers: { "Idempotency-Key": reportKey.current },
+              body: JSON.stringify({
+                visit_id: currentDraft.visitId,
+                raw_notes: currentDraft.rawNotes,
+              }),
+            })
+      if (controller.signal.aborted) return
+      current.setDraft({
         reportId: created.id,
         revisionId: created.current_revision.id,
         report: created,
       })
       setActive(2)
 
-      for (let attempt = 0; attempt < 60 && !cancelled; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 1000))
-        const report = await apiFetch<ReportResponse>(`/api/v1/reports/${created.id}`)
-        if (cancelled) return
-        setDraft({
-          revisionId: report.current_revision.id,
-          report,
-          workCompleted: report.current_revision.work_completed,
-          amount:
-            report.current_revision.amount_cents === null
-              ? ""
-              : String(report.current_revision.amount_cents / 100),
-        })
-        if (report.workflow_state === "MANUAL_INPUT_REQUIRED") {
-          navigate("editReport", { ...frame.params, manual: true })
-          return
-        }
-        if (report.workflow_state === "REVIEW_PENDING") {
-          setActive(3)
-          navigate("reportDraft", frame.params)
-          return
-        }
+      const polled = await pollReportUntilState(
+        created.id,
+        ["REVIEW_PENDING", "MANUAL_INPUT_REQUIRED", "FAILED"],
+        { maxAttempts: 90, signal: controller.signal },
+      )
+      if (controller.signal.aborted) return
+
+      if (polled.outcome === "error") throw polled.error
+      if (polled.outcome === "timeout") {
+        throw new Error(
+          "The analysis is taking longer than expected. It is still running — check again in a moment.",
+        )
       }
-      throw new Error("Report drafting timed out. Please try again.")
+
+      const report = polled.value
+      current.setDraft({
+        revisionId: report.current_revision.id,
+        report,
+        workCompleted: report.current_revision.work_completed,
+        amount:
+          report.current_revision.amount_cents === null
+            ? ""
+            : String(report.current_revision.amount_cents / 100),
+      })
+      if (report.workflow_state === "MANUAL_INPUT_REQUIRED") {
+        current.replace("editReport", {
+          ...current.frameParams,
+          manual: true,
+          parked: true,
+        })
+        return
+      }
+      if (report.workflow_state === "FAILED") {
+        throw new Error(
+          report.workflow_error?.message ??
+            "The AI analysis could not be completed. Please try again.",
+        )
+      }
+      current.replace("reportDraft", current.frameParams)
     }
 
-    buildReport().catch((reason: unknown) => {
-      if (!cancelled) {
-        setError(reason instanceof Error ? reason.message : "Could not build report.")
-      }
+    runAnalysis().catch((reason: unknown) => {
+      if (controller.signal.aborted) return
+      setError(reason instanceof Error ? reason.message : "Could not analyse this visit.")
     })
-    return () => {
-      cancelled = true
-    }
-  }, [draft.rawNotes, draft.visitId, frame.params, navigate, setDraft])
+    return () => controller.abort()
+  }, [analysisKey, attempt])
+
+  if (error) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
+        <div className="grid size-20 place-items-center rounded-3xl border border-border bg-card">
+          <TriangleAlert className="size-8 text-warning" />
+        </div>
+        <h2 className="mt-6 text-lg font-semibold text-foreground">
+          Analysis needs attention
+        </h2>
+        <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">{error}</p>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <Button variant="secondary" onClick={() => replace("afterPhotos", frame.params)}>
+            Review photos
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => navigate("editReport", { ...frame.params, manual: true })}
+          >
+            Write it manually
+          </Button>
+          <Button
+            onClick={() => {
+              setError(null)
+              setActive(0)
+              setAttempt((value) => value + 1)
+            }}
+          >
+            Try again
+          </Button>
+        </div>
+        <Button variant="secondary" size="md" className="mt-6" onClick={() => reset("home")}>
+          Return to workspace
+        </Button>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
@@ -750,29 +793,45 @@ export function VoiceProcessingScreen() {
         <Sparkles className="size-8 text-foreground" />
         <span className="absolute inset-0 rounded-3xl border border-foreground/20 animate-ping" />
       </div>
-      <h2 className="mt-6 text-lg font-semibold text-foreground">Building your report</h2>
-      <p className="mt-1 text-sm text-muted-foreground">This usually takes a few seconds</p>
-      {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+      <h2 className="mt-6 text-lg font-semibold text-foreground">Analysing this visit</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Reading your notes and comparing the photos
+      </p>
 
       <div className="mt-8 w-full max-w-xs space-y-3 text-left">
-        {steps.map((s, i) => (
-          <div key={s} className="flex items-center gap-3">
+        {ANALYSIS_STEPS.map((label, index) => (
+          <div key={label} className="flex items-center gap-3">
             <span
               className={
                 "grid size-6 place-items-center rounded-full border text-xs " +
-                (i < active
+                (index < active
                   ? "border-success bg-success text-success-foreground"
-                  : i === active
+                  : index === active
                     ? "border-foreground text-foreground"
                     : "border-border text-muted-foreground")
               }
             >
-              {i < active ? <Check className="size-3.5" strokeWidth={3} /> : i === active ? <LoaderCircle className="size-3.5 animate-spin" /> : i + 1}
+              {index < active ? (
+                <Check className="size-3.5" strokeWidth={3} />
+              ) : index === active ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : (
+                index + 1
+              )}
             </span>
-            <span className={"text-sm " + (i <= active ? "text-foreground" : "text-muted-foreground")}>{s}</span>
+            <span
+              className={
+                "text-sm " + (index <= active ? "text-foreground" : "text-muted-foreground")
+              }
+            >
+              {label}
+            </span>
           </div>
         ))}
       </div>
+      <Button variant="secondary" size="md" className="mt-8" onClick={() => reset("home")}>
+        Return to workspace
+      </Button>
     </div>
   )
 }
@@ -780,7 +839,7 @@ export function VoiceProcessingScreen() {
 /* --------------------------- REPORT DRAFT ----------------------------- */
 
 export function ReportDraftScreen() {
-  const { back, navigate, frame, draft, setDraft } = useNav()
+  const { back, navigate, replace, frame, draft, setDraft } = useNav()
   const customer = useCustomer()
   const report = draft.report
   const revision = report?.current_revision
@@ -788,7 +847,9 @@ export function ReportDraftScreen() {
   const [error, setError] = useState<string | null>(null)
   const confirmKey = useRef(crypto.randomUUID())
 
-  async function continueToEvidence() {
+  const comparison = revision?.visual_comparison ?? null
+
+  async function confirmAndContinue() {
     if (!draft.reportId) return
     setConfirming(true)
     setError(null)
@@ -800,11 +861,24 @@ export function ReportDraftScreen() {
             headers: { "Idempotency-Key": confirmKey.current },
           })
       if (confirmed) setDraft({ report: confirmed })
-      navigate("afterPhotos", frame.params)
+      navigate("signature", frame.params)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not confirm report.")
     } finally {
       setConfirming(false)
+    }
+  }
+
+  async function rerunAnalysis() {
+    if (!draft.reportId) return
+    setError(null)
+    try {
+      await apiFetch<ReportResponse>(`/api/v1/reports/${draft.reportId}/retry`, {
+        method: "POST",
+      })
+      replace("analysisProcessing", frame.params)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not rerun the analysis.")
     }
   }
 
@@ -839,7 +913,7 @@ export function ReportDraftScreen() {
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1"><Calendar className="size-3" /> Aug 22, 2026</span>
             <span className="inline-flex items-center gap-1"><Clock className="size-3" /> 09:41 AM</span>
-            <span className="inline-flex items-center gap-1"><Camera className="size-3" /> {draft.beforePhotos + draft.afterPhotos} photos</span>
+            <span className="inline-flex items-center gap-1"><Camera className="size-3" /> {draft.beforePhotoAssets.length + draft.afterPhotoAssets.length} photos</span>
           </div>
         </Card>
 
@@ -875,30 +949,114 @@ export function ReportDraftScreen() {
           <Card className="p-3">
             <p className="mb-2 text-xs font-medium text-muted-foreground">Before</p>
             <div className="grid grid-cols-2 gap-1.5">
-              {Array.from({ length: Math.min(draft.beforePhotos || 2, 2) }).map((_, i) => (
-                <PhotoThumb key={i} tone="before" index={i + 1} />
+              {draft.beforePhotoAssets.map((photo, i) => (
+                <img
+                  key={photo.assetId}
+                  src={photo.previewUrl}
+                  alt={`Before ${i + 1}`}
+                  className="aspect-square w-full rounded-lg border border-border object-cover"
+                />
               ))}
             </div>
           </Card>
           <Card className="p-3">
             <p className="mb-2 text-xs font-medium text-muted-foreground">After</p>
             <div className="grid grid-cols-2 gap-1.5">
-              {Array.from({ length: Math.min(draft.afterPhotos || 2, 2) }).map((_, i) => (
-                <PhotoThumb key={i} tone="after" index={i + 1} />
+              {draft.afterPhotoAssets.map((photo, i) => (
+                <img
+                  key={photo.assetId}
+                  src={photo.previewUrl}
+                  alt={`After ${i + 1}`}
+                  className="aspect-square w-full rounded-lg border border-border object-cover"
+                />
               ))}
             </div>
           </Card>
         </div>
+
+        {comparison ? (
+          <>
+            <SectionLabel>
+              <span className="mt-6 block">Before / after comparison</span>
+            </SectionLabel>
+            <Card className="mt-2 p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    {comparison.verdict.replaceAll("_", " ")}
+                  </p>
+                  <p className="mt-2 text-sm leading-relaxed text-foreground">{comparison.summary}</p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="font-mono text-3xl font-semibold text-foreground">
+                    {comparison.quality_assessment.score}/10
+                  </p>
+                  <p className="text-xs text-muted-foreground">{comparison.confidence}% confidence</p>
+                </div>
+              </div>
+              <p className="mt-4 text-sm leading-relaxed text-foreground">
+                {comparison.comparison.match_explanation}
+              </p>
+              <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
+                {comparison.comparison.visible_changes.map((item, index) => (
+                  <li key={index}>• {item}</li>
+                ))}
+              </ul>
+            </Card>
+            <ResultList title="Visually confirmed" items={comparison.comparison.visible_changes} />
+            <ResultList title="Done well" items={comparison.quality_assessment.strengths} />
+            <ResultList title="Issues & suspicious items" items={comparison.quality_assessment.issues} />
+            <ResultList title="Unverified" items={comparison.quality_assessment.unverified_items} />
+            <section className="mt-5">
+              <SectionLabel>Price assessment</SectionLabel>
+              <Card className="mt-2 p-4">
+                <p className="text-sm font-semibold capitalize text-foreground">
+                  {comparison.price_assessment.price_verdict.replaceAll("_", " ")}
+                </p>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                  {comparison.price_assessment.price_explanation}
+                </p>
+              </Card>
+            </section>
+            <ResultList title="Analysis limitations" items={comparison.limitations} />
+            <ResultList title="Recommended next steps" items={comparison.recommended_next_steps} />
+            <Card className="mt-5 p-4 text-xs leading-relaxed text-muted-foreground">
+              This visual assessment does not substitute for a legal opinion, technical
+              acceptance inspection, or construction expert review.
+            </Card>
+          </>
+        ) : (
+          <Card className="mt-5 flex gap-3 p-4">
+            <TriangleAlert className="size-5 shrink-0 text-warning" />
+            <div>
+              <p className="text-sm font-semibold text-foreground">
+                No photo comparison is attached
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Nothing was fabricated. You can rerun the analysis or continue with the
+                written report alone.
+              </p>
+            </div>
+          </Card>
+        )}
       </Page>
       <FlowFooter>
         {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
-        <div className="flex gap-3">
-          <Button variant="secondary" size="lg" icon={Pencil} onClick={() => navigate("editReport", frame.params)}>
-            Edit
+        <div className="space-y-2.5">
+          <Button size="lg" fullWidth iconRight={ArrowRight} disabled={confirming} onClick={confirmAndContinue}>
+            {confirming ? "Confirming…" : "Confirm & sign"}
           </Button>
-          <Button size="lg" fullWidth iconRight={ArrowRight} disabled={confirming} onClick={continueToEvidence}>
-            {confirming ? "Confirming…" : "Continue"}
-          </Button>
+          <div className="grid grid-cols-3 gap-2">
+            <Button variant="secondary" icon={Pencil} onClick={() => navigate("editReport", frame.params)}>
+              Edit
+            </Button>
+            <Button variant="secondary" onClick={() => replace("beforePhotos", frame.params)}>
+              Recapture
+            </Button>
+            <Button variant="secondary" onClick={rerunAnalysis}>
+              Rerun
+            </Button>
+          </div>
         </div>
       </FlowFooter>
     </>
@@ -932,16 +1090,19 @@ function EditableSection({
 export function EditReportScreen() {
   const { back, replace, frame, draft, setDraft } = useNav()
   const typingNotes = Boolean(frame.params.manual) && !draft.reportId
+  const parked = Boolean(frame.params.parked)
   const [work, setWork] = useState(
     (Boolean(frame.params.manual)
       ? draft.rawNotes
-      : draft.report?.current_revision.work_completed || draft.workCompleted) ||
-      "Diagnosed intermittent compressor fault. Replaced the start capacitor and cleaned the contactor points. Verified stable operation before leaving.",
+      : draft.report?.current_revision.work_completed || draft.workCompleted) || "",
   )
   const [amount, setAmount] = useState(
     draft.report?.current_revision.amount_cents === null
       ? ""
-      : draft.amount || String((draft.report?.current_revision.amount_cents ?? 16000) / 100),
+      : draft.amount ||
+          (draft.report?.current_revision.amount_cents === undefined
+            ? ""
+            : String(draft.report.current_revision.amount_cents / 100)),
   )
   const [materials, setMaterials] = useState(
     draft.report?.current_revision.materials.map((material) => ({
@@ -950,14 +1111,31 @@ export function EditReportScreen() {
     })) ?? [],
   )
   const [saving, setSaving] = useState(false)
+  const [retrying, setRetrying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const updateKey = useRef(crypto.randomUUID())
   const confirmKey = useRef(crypto.randomUUID())
 
+  async function retryAnalysis() {
+    if (!draft.reportId) return
+    setRetrying(true)
+    setError(null)
+    try {
+      await apiFetch<ReportResponse>(`/api/v1/reports/${draft.reportId}/retry`, {
+        method: "POST",
+      })
+      replace("analysisProcessing", frame.params)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not retry the analysis.")
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   async function save() {
     if (typingNotes) {
       setDraft({ rawNotes: work })
-      replace("voiceProcessing", frame.params)
+      replace("analysisProcessing", frame.params)
       return
     }
     if (!draft.reportId) return
@@ -1012,10 +1190,33 @@ export function EditReportScreen() {
         }
       />
       <Page width="form">
+        {parked && (
+          <Card className="mb-5 p-4">
+            <div className="flex gap-3">
+              <TriangleAlert className="size-5 shrink-0 text-warning" />
+              <div>
+                <p className="text-sm font-semibold text-foreground">
+                  AI analysis could not finish
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Your notes and photos are saved. Fill the report in yourself, run the
+                  analysis again, or take better photos first.
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <Button variant="secondary" onClick={() => replace("beforePhotos", frame.params)}>
+                Review photos
+              </Button>
+              <Button variant="secondary" disabled={retrying} onClick={retryAnalysis}>
+                {retrying ? "Retrying…" : "Retry analysis"}
+              </Button>
+            </div>
+          </Card>
+        )}
         <label className="block">
-          <span className="mb-1.5 flex items-center justify-between text-sm font-medium text-muted-foreground">
+          <span className="mb-1.5 block text-sm font-medium text-muted-foreground">
             Work completed
-            <span className="inline-flex items-center gap-1 text-xs"><Mic className="size-3" /> from voice</span>
           </span>
           <textarea
             value={work}
@@ -1087,219 +1288,21 @@ export function EditReportScreen() {
   )
 }
 
-/* ---------------------------- VISUAL AUDIT --------------------------- */
+/* --------------------------- RESULT SECTIONS -------------------------- */
 
-export function AuditProcessingScreen() {
-  const { replace, frame, draft, setDraft } = useNav()
-  const [error, setError] = useState<string | null>(null)
-  const started = useRef(false)
-
-  useEffect(() => {
-    if (started.current) return
-    started.current = true
-    let cancelled = false
-
-    async function runAudit() {
-      if (!draft.reportId) throw new Error("The report is missing.")
-      if (
-        draft.beforePhotoAssets.length === 0 ||
-        draft.beforePhotoAssets.length !== draft.afterPhotoAssets.length
-      ) {
-        throw new Error("Before and after photos must form equal pairs.")
-      }
-      const attempt = await apiFetch<VisualAuditAttemptResponse>(
-        `/api/v1/reports/${draft.reportId}/audits`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            before_photo_asset_ids: draft.beforePhotoAssets.map((photo) => photo.assetId),
-            after_photo_asset_ids: draft.afterPhotoAssets.map((photo) => photo.assetId),
-          }),
-        },
-      )
-      if (cancelled) return
-      setDraft({ audit: attempt })
-
-      for (let poll = 0; poll < 90 && !cancelled; poll += 1) {
-        if (poll > 0) await new Promise((resolve) => setTimeout(resolve, 1000))
-        const current = await apiFetch<VisualAuditAttemptResponse>(
-          `/api/v1/reports/${draft.reportId}/audits/${attempt.id}`,
-        )
-        if (cancelled) return
-        setDraft({ audit: current })
-        if (current.status === "succeeded" || current.status === "failed") {
-          replace("auditResult", frame.params)
-          return
-        }
-      }
-      throw new Error("The audit is still processing. Try checking it again.")
-    }
-
-    runAudit().catch((reason: unknown) => {
-      if (!cancelled) {
-        setError(reason instanceof Error ? reason.message : "Could not run the visual audit.")
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [draft.afterPhotoAssets, draft.beforePhotoAssets, draft.reportId, frame.params, replace, setDraft])
-
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
-      <div className="grid size-20 place-items-center rounded-3xl border border-border bg-card">
-        {error ? <TriangleAlert className="size-8 text-warning" /> : <LoaderCircle className="size-8 animate-spin text-foreground" />}
-      </div>
-      <h2 className="mt-6 text-lg font-semibold text-foreground">
-        {error ? "Audit needs attention" : "Comparing before and after photos"}
-      </h2>
-      <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
-        {error ?? "The visual auditor is checking the visible result, workmanship, photo limitations, and price."}
-      </p>
-      {error && (
-        <div className="mt-6 flex gap-3">
-          <Button variant="secondary" onClick={() => replace("afterPhotos", frame.params)}>Review photos</Button>
-          <Button onClick={() => replace("auditProcessing", frame.params)}>Retry audit</Button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function AuditList({ title, items }: { title: string; items: string[] }) {
+function ResultList({ title, items }: { title: string; items: string[] }) {
   if (items.length === 0) return null
   return (
     <section className="mt-5">
       <SectionLabel>{title}</SectionLabel>
       <Card className="mt-2 p-4">
         <ul className="space-y-2 text-sm text-foreground">
-          {items.map((item, index) => <li key={`${title}-${index}`}>• {item}</li>)}
+          {items.map((item, index) => (
+            <li key={`${title}-${index}`}>• {item}</li>
+          ))}
         </ul>
       </Card>
     </section>
-  )
-}
-
-export function AuditResultScreen() {
-  const { back, navigate, replace, frame, draft, setDraft } = useNav()
-  const [acknowledging, setAcknowledging] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const audit = draft.audit
-  const result = audit?.result
-
-  async function acknowledgeAndContinue() {
-    if (!draft.reportId || !audit) return
-    setAcknowledging(true)
-    setError(null)
-    try {
-      const acknowledged = await apiFetch<VisualAuditAttemptResponse>(
-        `/api/v1/reports/${draft.reportId}/audits/${audit.id}/acknowledge`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            reason: audit.status === "succeeded" ? "result_reviewed" : "continued_without_result",
-          }),
-        },
-      )
-      setDraft({ audit: acknowledged })
-      navigate("signature", frame.params)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not acknowledge the audit.")
-    } finally {
-      setAcknowledging(false)
-    }
-  }
-
-  if (!audit) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
-        <TriangleAlert className="size-8 text-warning" />
-        <p className="mt-4 text-sm text-muted-foreground">No visual audit is available.</p>
-        <Button className="mt-5" onClick={() => replace("afterPhotos", frame.params)}>Return to after photos</Button>
-      </div>
-    )
-  }
-
-  return (
-    <>
-      <ScreenHeader title="Visual audit" subtitle="Review before customer signature" onBack={back} />
-      <Page width="form">
-        {result ? (
-          <>
-            <Card className="p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{result.verdict.replaceAll("_", " ")}</p>
-                  <p className="mt-2 text-sm leading-relaxed text-foreground">{result.summary}</p>
-                </div>
-                <div className="shrink-0 text-right">
-                  <p className="font-mono text-3xl font-semibold text-foreground">{result.quality_assessment.score}/10</p>
-                  <p className="text-xs text-muted-foreground">{result.confidence}% confidence</p>
-                </div>
-              </div>
-            </Card>
-            <section className="mt-5">
-              <SectionLabel>Comparison</SectionLabel>
-              <Card className="mt-2 p-4 text-sm leading-relaxed text-foreground">
-                <p>{result.comparison.match_explanation}</p>
-                <ul className="mt-3 space-y-1 text-muted-foreground">
-                  {result.comparison.visible_changes.map((item, index) => <li key={index}>• {item}</li>)}
-                </ul>
-              </Card>
-            </section>
-            <AuditList title="Strengths" items={result.quality_assessment.strengths} />
-            <AuditList title="Issues" items={result.quality_assessment.issues} />
-            <AuditList title="Unverified" items={result.quality_assessment.unverified_items} />
-            <section className="mt-5">
-              <SectionLabel>Price assessment</SectionLabel>
-              <Card className="mt-2 p-4">
-                <p className="text-sm font-semibold capitalize text-foreground">{result.price_assessment.price_verdict.replaceAll("_", " ")}</p>
-                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{result.price_assessment.price_explanation}</p>
-              </Card>
-            </section>
-            {result.evidence.length > 0 && (
-              <section className="mt-5">
-                <SectionLabel>Evidence</SectionLabel>
-                <div className="mt-2 space-y-2">
-                  {result.evidence.map((item, index) => (
-                    <Card key={index} className="p-4 text-sm">
-                      <p className="text-foreground">{item.observation}</p>
-                      <p className="mt-1 text-muted-foreground">{item.impact}</p>
-                    </Card>
-                  ))}
-                </div>
-              </section>
-            )}
-            <AuditList title="Limitations" items={result.limitations} />
-            <AuditList title="Recommended next steps" items={result.recommended_next_steps} />
-          </>
-        ) : (
-          <Card className="flex gap-3 p-4">
-            <TriangleAlert className="size-5 shrink-0 text-warning" />
-            <div>
-              <p className="text-sm font-semibold text-foreground">The audit could not be completed</p>
-              <p className="mt-1 text-sm text-muted-foreground">No assessment was fabricated. You may rerun it or explicitly continue without a result.</p>
-            </div>
-          </Card>
-        )}
-        <Card className="mt-5 p-4 text-xs leading-relaxed text-muted-foreground">
-          This visual assessment does not substitute for a legal opinion, technical acceptance inspection, or construction expert review.
-        </Card>
-        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
-      </Page>
-      <FlowFooter>
-        <div className="space-y-2.5">
-          <Button size="lg" fullWidth iconRight={ArrowRight} disabled={acknowledging} onClick={acknowledgeAndContinue}>
-            {acknowledging ? "Saving acknowledgement…" : result ? "Acknowledge & continue" : "Continue without result"}
-          </Button>
-          <div className="grid grid-cols-3 gap-2">
-            <Button variant="secondary" onClick={() => replace("afterPhotos", frame.params)}>Recapture</Button>
-            <Button variant="secondary" onClick={() => navigate("editReport", frame.params)}>Edit report</Button>
-            <Button variant="secondary" onClick={() => replace("auditProcessing", frame.params)}>Rerun</Button>
-          </div>
-        </div>
-      </FlowFooter>
-    </>
   )
 }
 
@@ -1320,18 +1323,20 @@ export function SignatureScreen() {
 
   async function waitForCompletion() {
     if (!draft.reportId) return false
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      const completed = await apiFetch<ReportResponse>(
-        `/api/v1/reports/${draft.reportId}`,
+    const polled = await pollReportUntilState(
+      draft.reportId,
+      ["COMPLETED", "MANUAL_INPUT_REQUIRED"],
+      { maxAttempts: 60 },
+    )
+    if (polled.outcome !== "terminal") return false
+    setDraft({ report: polled.value })
+    if (polled.value.workflow_state === "MANUAL_INPUT_REQUIRED") {
+      throw new Error(
+        "The signed report was saved, but its PDF could not be generated. Retry from the report.",
       )
-      setDraft({ report: completed })
-      if (completed.workflow_state === "COMPLETED") {
-        navigate("completed", frame.params)
-        return true
-      }
     }
-    return false
+    navigate("completed", frame.params)
+    return true
   }
 
   async function finishReport() {
@@ -1502,7 +1507,7 @@ export function CompletedScreen() {
           <div className="mt-4 space-y-3 text-sm">
             <SummaryRow label="Date & time" value="Aug 22, 2026 · 09:41 AM" />
             <SummaryRow label="Location" value="Captured · ±5m" />
-            <SummaryRow label="Photos" value={`${draft.beforePhotos + draft.afterPhotos} (before & after)`} />
+            <SummaryRow label="Photos" value={`${draft.beforePhotoAssets.length + draft.afterPhotoAssets.length} (before & after)`} />
             <SummaryRow label="Signature" value={draft.signed ? "Signed on-site" : "Link sent"} />
             <SummaryRow label="Amount" value={completedAmount} strong />
           </div>

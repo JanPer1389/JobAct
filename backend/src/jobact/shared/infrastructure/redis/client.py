@@ -9,6 +9,7 @@ consumer groups, or generic cache abstraction here.
 """
 
 import json
+from dataclasses import asdict, dataclass
 from functools import lru_cache
 
 import redis.asyncio as redis
@@ -17,6 +18,7 @@ from jobact.shared.infrastructure.config import get_settings
 
 _STATE_KEY_PREFIX = "jobact:oauth-state:"
 _SESSION_KEY_PREFIX = "jobact:session:"
+_AUTH_RATE_KEY_PREFIX = "jobact:auth-rate:"
 
 # OAuth `state` -> `nonce` round trip is short-lived: the user is expected
 # to complete the Google redirect within a few minutes.
@@ -42,6 +44,14 @@ def get_redis_client() -> redis.Redis:
     return redis.from_url(settings.redis_url, decode_responses=True)
 
 
+@dataclass(frozen=True)
+class OAuthAttempt:
+    nonce: str
+    operation: str = "sign_in"
+    user_id: str | None = None
+    session_id: str | None = None
+
+
 class OAuthStateStore:
     """Stores the `nonce` expected for a given OAuth `state`, keyed by
     `state`, for the short window between `/auth/google/start` and
@@ -53,25 +63,55 @@ class OAuthStateStore:
         self._client = client
 
     async def put(
-        self, state: str, nonce: str, ttl_seconds: int = STATE_TTL_SECONDS
+        self,
+        state: str,
+        nonce: str,
+        ttl_seconds: int = STATE_TTL_SECONDS,
+        *,
+        operation: str = "sign_in",
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> None:
+        attempt = OAuthAttempt(
+            nonce=nonce,
+            operation=operation,
+            user_id=user_id,
+            session_id=session_id,
+        )
         await self._client.set(
-            f"{_STATE_KEY_PREFIX}{state}", json.dumps({"nonce": nonce}), ex=ttl_seconds
+            f"{_STATE_KEY_PREFIX}{state}", json.dumps(asdict(attempt)), ex=ttl_seconds
         )
 
-    async def pop(self, state: str) -> str | None:
+    async def pop(self, state: str) -> OAuthAttempt | None:
         """Return the `nonce` stored for `state`, deleting the entry so it
         cannot be consumed twice. Returns `None` if `state` is unknown
         (never stored, already consumed, or expired).
         """
         key = f"{_STATE_KEY_PREFIX}{state}"
-        raw = await self._client.get(key)
+        raw = await self._client.getdel(key)
         if raw is None:
             return None
-        await self._client.delete(key)
         data = json.loads(raw)
-        nonce: str = data["nonce"]
-        return nonce
+        return OAuthAttempt(**data)
+
+
+class AuthRateLimiter:
+    """Small Redis fixed-window limiter used only at the auth boundary."""
+
+    def __init__(self, client: redis.Redis) -> None:
+        self._client = client
+
+    async def check(
+        self, key: str, *, limit: int, window_seconds: int
+    ) -> int | None:
+        redis_key = f"{_AUTH_RATE_KEY_PREFIX}{key}"
+        count = await self._client.incr(redis_key)
+        if count == 1:
+            await self._client.expire(redis_key, window_seconds)
+        if count <= limit:
+            return None
+        ttl = await self._client.ttl(redis_key)
+        return max(int(ttl), 1)
 
 
 class SessionCache:

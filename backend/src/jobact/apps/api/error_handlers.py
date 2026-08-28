@@ -1,22 +1,22 @@
 """Exception handlers that turn raised exceptions into
 `contracts.errors.v1.envelope.ErrorEnvelope` JSON responses.
 
-Registered on the app in `main.create_app()`. Scoped to exactly what
-this task's routes raise: `ApiError` (401/403/400 cases from
-`apps/api/deps.py` and `apps/api/routers/auth.py`), FastAPI's own
-`RequestValidationError` (422), and
-`routers.auth.LogoutCacheDeleteFailedError` (502) -- not a generic
-exception taxonomy for error cases that don't exist yet.
+Registered on the app in `main.create_app()`. Every envelope carries the
+request's own correlation id (see `middleware/correlation.py`), so an
+error a user reports can be traced to its request and, for anything that
+started a workflow, to the worker logs for that job.
 """
-
-import uuid
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from jobact.apps.api.middleware.correlation import get_correlation_id
 from jobact.apps.api.routers.auth import LogoutCacheDeleteFailedError
 from jobact.contexts.media.domain.media_asset import MediaVerificationError
+from jobact.contexts.reports.application.report_handlers import (
+    ReportEvidenceIncompleteError,
+)
 from jobact.contexts.reports.domain.report import ReportStateError
 from jobact.contexts.visual_audits.domain.visual_audit import (
     VisualAuditStateError,
@@ -27,15 +27,37 @@ from jobact.shared.application.authorization import AuthorizationError
 
 
 def register_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ReportEvidenceIncompleteError)
+    async def _handle_report_evidence_incomplete(
+        request: Request, exc: ReportEvidenceIncompleteError
+    ) -> JSONResponse:
+        """409, not 422: the request body is well-formed -- it is the
+        referenced visit's state that is not ready for analysis.
+        """
+        envelope = ErrorEnvelope(
+            type="report-evidence-incomplete",
+            title="Conflict",
+            status=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+            correlation_id=str(get_correlation_id(request)),
+            errors=[
+                ErrorDetail(loc=["evidence", item], message=f"{item} is required")
+                for item in exc.missing
+            ],
+        )
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT, content=envelope.model_dump()
+        )
+
     @app.exception_handler(VisualAuditValidationError)
     async def _handle_visual_audit_validation(request: Request, exc: VisualAuditValidationError) -> JSONResponse:
-        envelope = ErrorEnvelope(type="visual-audit-validation", title="Unprocessable Entity", status=422, detail=str(exc), correlation_id=str(uuid.uuid4()))
+        envelope = ErrorEnvelope(type="visual-audit-validation", title="Unprocessable Entity", status=422, detail=str(exc), correlation_id=str(get_correlation_id(request)))
         return JSONResponse(status_code=422, content=envelope.model_dump())
 
     @app.exception_handler(VisualAuditStateError)
     @app.exception_handler(ReportStateError)
     async def _handle_state_conflict(request: Request, exc: Exception) -> JSONResponse:
-        envelope = ErrorEnvelope(type="state-conflict", title="Conflict", status=409, detail=str(exc), correlation_id=str(uuid.uuid4()))
+        envelope = ErrorEnvelope(type="state-conflict", title="Conflict", status=409, detail=str(exc), correlation_id=str(get_correlation_id(request)))
         return JSONResponse(status_code=409, content=envelope.model_dump())
 
     @app.exception_handler(MediaVerificationError)
@@ -47,7 +69,7 @@ def register_error_handlers(app: FastAPI) -> None:
             title="Unprocessable Entity",
             status=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
-            correlation_id=str(uuid.uuid4()),
+            correlation_id=str(get_correlation_id(request)),
         )
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -63,7 +85,7 @@ def register_error_handlers(app: FastAPI) -> None:
             title="Forbidden",
             status=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
-            correlation_id=str(uuid.uuid4()),
+            correlation_id=str(get_correlation_id(request)),
         )
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN, content=envelope.model_dump()
@@ -76,10 +98,14 @@ def register_error_handlers(app: FastAPI) -> None:
             title=exc.title,
             status=exc.status,
             detail=exc.detail,
-            correlation_id=str(uuid.uuid4()),
+            correlation_id=str(get_correlation_id(request)),
             errors=exc.errors,
         )
-        return JSONResponse(status_code=exc.status, content=envelope.model_dump())
+        return JSONResponse(
+            status_code=exc.status,
+            content=envelope.model_dump(),
+            headers=exc.headers,
+        )
 
     @app.exception_handler(LogoutCacheDeleteFailedError)
     async def _handle_logout_cache_delete_failed(
@@ -100,7 +126,7 @@ def register_error_handlers(app: FastAPI) -> None:
                 "Session was revoked but its cache entry could not be "
                 "deleted. Please try again."
             ),
-            correlation_id=str(uuid.uuid4()),
+            correlation_id=str(get_correlation_id(request)),
         )
         response = JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY, content=envelope.model_dump()
@@ -117,7 +143,7 @@ def register_error_handlers(app: FastAPI) -> None:
             title="Unprocessable Entity",
             status=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Request validation failed.",
-            correlation_id=str(uuid.uuid4()),
+            correlation_id=str(get_correlation_id(request)),
             errors=[
                 ErrorDetail(
                     loc=[str(part) for part in error["loc"]], message=error["msg"]
