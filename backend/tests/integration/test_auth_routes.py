@@ -23,13 +23,18 @@ from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import delete
 
 from jobact.apps.api.main import create_app
-from jobact.apps.api.routers.auth import get_identity_provider
+from jobact.apps.api.routers.auth import (
+    get_auth_rate_limiter,
+    get_identity_provider,
+    get_password_hasher,
+)
 from jobact.contexts.identity.infrastructure.session_repository import SessionRepository
 from jobact.shared.application.ports import ExternalIdentity
 from jobact.shared.infrastructure.config import get_settings
 from jobact.shared.infrastructure.postgres.engine import get_sessionmaker
 from jobact.shared.infrastructure.postgres.identity_tables import (
     identities_table,
+    local_credentials_table,
     memberships_table,
     organizations_table,
     sessions_table,
@@ -41,7 +46,7 @@ from jobact.shared.infrastructure.redis.client import (
     SessionCache,
     get_redis_client,
 )
-from tests.fakes import FakeIdentityProvider
+from tests.fakes import FakeAuthRateLimiter, FakeIdentityProvider, FakePasswordHasher
 
 ALLOWED_ORIGIN = "http://localhost:3000"
 FOREIGN_ORIGIN = "https://evil.example.com"
@@ -61,6 +66,7 @@ async def clean_identity_tables() -> AsyncIterator[None]:
         async with session_factory() as session, session.begin():
             await session.execute(delete(sessions_table))
             await session.execute(delete(memberships_table))
+            await session.execute(delete(local_credentials_table))
             await session.execute(delete(identities_table))
             await session.execute(delete(organizations_table))
             await session.execute(delete(user_profiles_table))
@@ -76,6 +82,8 @@ async def client(clean_identity_tables: None) -> AsyncIterator[AuthTestClient]:
     app = create_app()
     fake_identity_provider = FakeIdentityProvider()
     app.dependency_overrides[get_identity_provider] = lambda: fake_identity_provider
+    app.dependency_overrides[get_password_hasher] = lambda: FakePasswordHasher()
+    app.dependency_overrides[get_auth_rate_limiter] = lambda: FakeAuthRateLimiter()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(
@@ -118,6 +126,55 @@ async def test_unseeded_oauth_state_is_rejected(client: AuthTestClient) -> None:
         params={"state": "never-seeded", "code": "unused"},
     )
     assert response.status_code == 400
+
+
+async def test_register_and_login_return_normal_session(client: AuthTestClient) -> None:
+    register_response = await client.http.post(
+        "/api/v1/auth/register",
+        headers={"origin": ALLOWED_ORIGIN},
+        json={
+            "email": " Ada@Example.COM ",
+            "password": "correct horse battery staple",
+            "repeat_password": "correct horse battery staple",
+        },
+    )
+    assert register_response.status_code == 201
+    registered = register_response.json()
+    assert registered["role"] == "owner"
+
+    await client.http.post(
+        "/api/v1/auth/logout", headers={"origin": ALLOWED_ORIGIN}
+    )
+    login_response = await client.http.post(
+        "/api/v1/auth/login",
+        headers={"origin": ALLOWED_ORIGIN},
+        json={"email": "ada@example.com", "password": "correct horse battery staple"},
+    )
+    assert login_response.status_code == 200
+    assert login_response.json()["user_id"] == registered["user_id"]
+
+
+async def test_login_failure_is_generic_for_missing_and_wrong_password(
+    client: AuthTestClient,
+) -> None:
+    await client.http.post(
+        "/api/v1/auth/register",
+        headers={"origin": ALLOWED_ORIGIN},
+        json={
+            "email": "existing@example.com",
+            "password": "correct horse battery staple",
+            "repeat_password": "correct horse battery staple",
+        },
+    )
+    for email in ("missing@example.com", "existing@example.com"):
+        response = await client.http.post(
+            "/api/v1/auth/login",
+            headers={"origin": ALLOWED_ORIGIN},
+            json={"email": email, "password": "wrong-password"},
+        )
+        assert response.status_code == 401
+        assert response.json()["type"] == "invalid-credentials"
+        assert response.json()["detail"] == "Invalid email or password."
 
 
 async def test_callback_sets_httponly_session_cookie(client: AuthTestClient) -> None:

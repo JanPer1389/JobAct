@@ -32,6 +32,7 @@ Run with:
     uv run pytest tests/integration/test_idempotency.py
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from uuid import uuid4
@@ -81,6 +82,24 @@ def _make_test_app() -> tuple[FastAPI, Handlers]:
         body: dict,
         principal: CurrentPrincipal = Depends(get_current_principal),
     ) -> dict:
+        handlers.calls.append(body)
+        return {"received": body, "call_count": len(handlers.calls)}
+
+    return app, handlers
+
+
+def _make_anonymous_test_app() -> tuple[FastAPI, Handlers]:
+    """Like `_make_test_app`, but the route takes no principal -- models
+    the unauthenticated mutations the middleware must also protect
+    (`/auth/register`, `/auth/login`): no session cookie exists yet for
+    `try_resolve_principal` to resolve.
+    """
+    app = FastAPI()
+    app.add_middleware(IdempotencyMiddleware)
+    handlers = Handlers(calls=[])
+
+    @app.post("/test/anonymous-echo")
+    async def echo(body: dict) -> dict:
         handlers.calls.append(body)
         return {"received": body, "call_count": len(handlers.calls)}
 
@@ -241,3 +260,78 @@ async def test_request_without_idempotency_key_header_is_unaffected(
     assert first.status_code == 200
     assert second.status_code == 200
     assert len(handlers.calls) == 2
+
+
+async def test_unauthenticated_request_is_also_protected_by_idempotency(
+    clean_tables: None,
+) -> None:
+    """Regression test: the middleware used to skip idempotency entirely
+    for any request it couldn't resolve a principal for
+    (`if principal is None: return await call_next(request)`), which left
+    genuinely unauthenticated mutations -- `/auth/register`, `/auth/login`
+    -- completely unprotected, including from the very race this whole
+    middleware exists to prevent. Unauthenticated requests are now scoped
+    under a shared anonymous organization id instead of skipping the
+    middleware.
+    """
+    test_app, handlers = _make_anonymous_test_app()
+
+    transport = ASGITransport(app=test_app)
+    async with AsyncClient(transport=transport, base_url="https://testserver") as http:
+        idempotency_key = f"key-{uuid4()}"
+        payload = {"email": "new-user@example.com"}
+
+        first = await http.post(
+            "/test/anonymous-echo",
+            json=payload,
+            headers={"Idempotency-Key": idempotency_key},
+        )
+        second = await http.post(
+            "/test/anonymous-echo",
+            json=payload,
+            headers={"Idempotency-Key": idempotency_key},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.content == second.content
+    assert handlers.calls == [payload]
+    assert second.json()["call_count"] == 1
+
+
+async def test_concurrent_same_key_requests_execute_the_handler_once(
+    clean_tables: None,
+) -> None:
+    session_cookie = await _sign_in_and_get_session_cookie(clean_tables)
+    settings = get_settings()
+    app = FastAPI()
+    app.add_middleware(IdempotencyMiddleware)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    @app.post("/test/concurrent")
+    async def concurrent_handler(
+        principal: CurrentPrincipal = Depends(get_current_principal),
+    ) -> dict:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return {"call_count": calls}
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="https://testserver") as http:
+        http.cookies.set(settings.session_cookie_name, session_cookie)
+        headers = {"Idempotency-Key": f"key-{uuid4()}"}
+        first_task = asyncio.create_task(http.post("/test/concurrent", headers=headers))
+        await entered.wait()
+        second_task = asyncio.create_task(http.post("/test/concurrent", headers=headers))
+        await asyncio.sleep(0.05)
+        release.set()
+        first, second = await asyncio.gather(first_task, second_task)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.content == second.content
+    assert calls == 1

@@ -15,7 +15,7 @@ LLM can compute or bypass.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 
@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from jobact.shared.application.ports import AiConnector
+from jobact.shared.infrastructure.config import get_settings
 
 
 class DraftedMaterial(BaseModel):
@@ -79,18 +80,62 @@ class LiteLlmCostCapture:
 
 _SYSTEM_PROMPT = (
     "You are drafting a field-service work report from a technician's rough "
-    "notes. Extract: (1) a clear, customer-readable summary of the work "
-    "completed, (2) any materials/parts used with quantities, (3) "
-    "estimated_work_units -- an integer count of the materially distinct "
-    "units of work volume the notes actually describe. One unit is one "
-    "discrete, materially distinct piece of work (e.g. one fixture "
-    "replaced, one leak sealed, one section serviced). Never count the same "
-    "work twice because it is mentioned more than once, and never count "
-    "work the notes do not describe. Never output a price, a currency, or "
-    "any monetary amount -- the application computes the price from your "
-    "unit count. Set confidence to reflect how well the notes support the "
-    "summary and the unit count."
+    "notes and the job's context. Extract: (1) a clear, customer-readable "
+    "summary of the work completed, (2) any materials/parts used with "
+    "quantities, (3) estimated_work_units -- an integer count of the "
+    "materially distinct units of work volume the notes actually describe. "
+    "One unit is one discrete, materially distinct piece of work (e.g. one "
+    "fixture replaced, one leak sealed, one section serviced). Never count "
+    "the same work twice because it is mentioned more than once, and never "
+    "count work the notes do not describe. Never output a price, a "
+    "currency, or any monetary amount -- the application computes the "
+    "price from your unit count. Set confidence to reflect how well the "
+    "notes support the summary and the unit count."
 )
+
+
+@dataclass(frozen=True)
+class ReportAnalysisContext:
+    """Structured job context handed to both AI steps of one analysis run."""
+
+    raw_notes: str
+    customer_name: str
+    customer_address: str
+    customer_service_type: str
+    gps_lat: float | None = None
+    gps_lon: float | None = None
+    current_work_completed: str | None = None
+    current_materials: list[DraftedMaterial] = field(default_factory=list)
+    current_amount_cents: int | None = None
+
+
+def build_drafting_prompt(context: ReportAnalysisContext) -> str:
+    lines = [
+        "Job context:",
+        f"- Customer: {context.customer_name}",
+        f"- Address: {context.customer_address}",
+        f"- Service type: {context.customer_service_type}",
+    ]
+    if context.gps_lat is not None and context.gps_lon is not None:
+        lines.append(f"- Visit coordinates: {context.gps_lat}, {context.gps_lon}")
+    if context.current_work_completed:
+        lines += [
+            "",
+            (
+                "An earlier version of this report already exists. Verify and "
+                "improve it rather than starting over:"
+            ),
+            f"- Current work completed: {context.current_work_completed}",
+        ]
+        if context.current_materials:
+            materials = ", ".join(
+                f"{m.label} x{m.qty}" for m in context.current_materials
+            )
+            lines.append(f"- Current materials: {materials}")
+        if context.current_amount_cents is not None:
+            lines.append(f"- Current amount (cents): {context.current_amount_cents}")
+    lines += ["", "Technician's raw notes:", context.raw_notes]
+    return "\n".join(lines)
 
 
 def build_drafting_agent(
@@ -105,13 +150,20 @@ def build_drafting_agent(
     )
 
 
-async def draft_report(connector: AiConnector, raw_notes: str) -> DraftingResult:
+async def draft_report(
+    connector: AiConnector, context: ReportAnalysisContext
+) -> DraftingResult:
+    settings = get_settings()
     cost_capture = LiteLlmCostCapture()
     async with httpx.AsyncClient(
-        event_hooks={"response": [cost_capture.capture]}
+        timeout=httpx.Timeout(
+            settings.ai_request_timeout_seconds,
+            connect=settings.ai_connect_timeout_seconds,
+        ),
+        event_hooks={"response": [cost_capture.capture]},
     ) as http_client:
         agent = build_drafting_agent(connector, http_client=http_client)
-        result = await agent.run(raw_notes)
+        result = await agent.run(build_drafting_prompt(context))
     usage = result.usage
     return DraftingResult(
         draft=result.output,

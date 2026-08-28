@@ -22,6 +22,12 @@ workflow_runs_table = Table(
     Column("state_version", Integer, nullable=False),
     Column("correlation_id", UUID(as_uuid=True), nullable=False),
     Column("input_data", JSONB, nullable=False),
+    # Set while a pending step's external work (e.g. an AI provider call) is
+    # in flight, cleared whenever the run re-enters a pending state via
+    # resume_to(). Lets a duplicate/concurrent dispatch of the same pending
+    # step recognize that another execution already claimed it, even though
+    # claiming alone does not change `state` -- see WorkflowRun.claim_attempt().
+    Column("claimed_at", DateTime(timezone=True), nullable=True),
     schema="workflow",
 )
 

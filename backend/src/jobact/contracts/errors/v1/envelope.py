@@ -51,6 +51,7 @@ class ApiError(Exception):
         title: str,
         detail: str,
         errors: list[ErrorDetail] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(detail)
         self.status = status
@@ -58,3 +59,4 @@ class ApiError(Exception):
         self.title = title
         self.detail = detail
         self.errors = errors or []
+        self.headers = headers or {}

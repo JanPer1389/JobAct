@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from jobact.shared.domain.aggregate import AggregateRoot
@@ -41,6 +42,8 @@ class ReportRevision:
     amount_confirmed_at: datetime | None = None
     frozen_at: datetime | None = None
     materials: list[Material] = field(default_factory=list)
+    visual_comparison_status: str | None = None
+    visual_comparison: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -109,7 +112,7 @@ class Report(AggregateRoot):
             ),
         )
 
-    def apply_ai_draft(
+    def apply_ai_unified_result(
         self,
         *,
         work_completed: str,
@@ -117,8 +120,11 @@ class Report(AggregateRoot):
         amount_cents: int | None,
         currency: str,
         ai_confidence: str,
+        visual_comparison_status: str | None = None,
+        visual_comparison: dict[str, Any] | None = None,
     ) -> None:
-        """Apply one AI-drafted revision, including its suggested amount.
+        """Apply one unified analysis result: the drafted work report plus
+        the BEFORE/AFTER visual comparison produced in the same run.
 
         The amount is advisory only: this method never sets
         `confirmed_by_user_at`/`amount_confirmed_at`, so
@@ -133,6 +139,8 @@ class Report(AggregateRoot):
         revision.amount_cents = amount_cents
         revision.currency = currency
         revision.ai_confidence = ai_confidence
+        revision.visual_comparison_status = visual_comparison_status
+        revision.visual_comparison = visual_comparison
 
     def update_revision(
         self,

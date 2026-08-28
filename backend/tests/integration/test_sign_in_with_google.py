@@ -26,6 +26,7 @@ from jobact.shared.application.ports import ExternalIdentity
 from jobact.shared.infrastructure.postgres.engine import get_sessionmaker
 from jobact.shared.infrastructure.postgres.identity_tables import (
     identities_table,
+    local_credentials_table,
     memberships_table,
     organizations_table,
     sessions_table,
@@ -45,6 +46,7 @@ async def clean_identity_tables() -> AsyncIterator[None]:
         async with session_factory() as session, session.begin():
             await session.execute(delete(sessions_table))
             await session.execute(delete(memberships_table))
+            await session.execute(delete(local_credentials_table))
             await session.execute(delete(identities_table))
             await session.execute(delete(organizations_table))
             await session.execute(delete(user_profiles_table))

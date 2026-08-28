@@ -6,10 +6,12 @@ Postgres is what actually matters here, since it's what proves the
 asset's status is left unchanged on rejection.
 """
 
-from uuid import uuid4
+from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, insert, select
+from sqlalchemy.exc import IntegrityError
 
 from jobact.contexts.media.application.media_handlers import (
     AttachMediaHandler,
@@ -19,7 +21,12 @@ from jobact.contexts.media.application.media_handlers import (
 from jobact.contexts.media.domain.media_asset import MediaVerificationError
 from jobact.shared.application.authorization import AuthorizationError
 from jobact.shared.infrastructure.postgres.engine import get_sessionmaker
-from jobact.shared.infrastructure.postgres.operations_tables import media_assets_table
+from jobact.shared.infrastructure.postgres.operations_tables import (
+    media_assets_table,
+    visits_table,
+    visual_audit_attempts_table,
+    visual_audit_photos_table,
+)
 from jobact.shared.infrastructure.postgres.uow import SqlAlchemyUnitOfWork
 from tests.fakes import FakeClock, FakeIdGenerator, FakeObjectStorage
 
@@ -28,10 +35,123 @@ from tests.fakes import FakeClock, FakeIdGenerator, FakeObjectStorage
 async def clean_media_assets():
     session_factory = get_sessionmaker()
     async with session_factory() as session, session.begin():
+        await session.execute(delete(visual_audit_photos_table))
+        await session.execute(delete(visual_audit_attempts_table))
         await session.execute(delete(media_assets_table))
+        await session.execute(delete(visits_table))
     yield
     async with session_factory() as session, session.begin():
+        await session.execute(delete(visual_audit_photos_table))
+        await session.execute(delete(visual_audit_attempts_table))
         await session.execute(delete(media_assets_table))
+        await session.execute(delete(visits_table))
+
+
+@pytest.mark.asyncio
+async def test_nonexistent_visit_id_is_rejected_by_postgres(clean_media_assets):
+    with pytest.raises(IntegrityError):
+        async with get_sessionmaker()() as session, session.begin():
+            await session.execute(
+                insert(media_assets_table).values(
+                    id=uuid4(),
+                    organization_id=uuid4(),
+                    storage_key="test/invalid-visit",
+                    content_type="image/jpeg",
+                    byte_size=1,
+                    sha256="a" * 64,
+                    kind="photo",
+                    phase="before",
+                    status="pending_upload",
+                    visit_id=uuid4(),
+                    report_id=None,
+                    captured_at=None,
+                    uploaded_at=None,
+                )
+            )
+
+
+async def _insert_visit(visit_id: UUID, organization_id: UUID) -> None:
+    async with get_sessionmaker()() as session, session.begin():
+        await session.execute(
+            insert(visits_table).values(
+                id=visit_id,
+                organization_id=organization_id,
+                customer_id=uuid4(),
+                technician_id=uuid4(),
+                status="in_progress",
+                started_at=datetime.now(UTC),
+                gps_lat=None,
+                gps_lon=None,
+                gps_accuracy_m=None,
+                before_photo_count=0,
+                after_photo_count=0,
+                raw_notes=None,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_media_asset_can_be_created_and_linked_to_an_existing_visit(
+    clean_media_assets,
+):
+    organization_id = uuid4()
+    visit_id = uuid4()
+    await _insert_visit(visit_id, organization_id)
+
+    asset, _ = await RequestMediaUploadHandler(
+        uow=SqlAlchemyUnitOfWork(),
+        object_storage=FakeObjectStorage(),
+        clock=FakeClock(),
+        id_generator=FakeIdGenerator(),
+    ).handle(
+        organization_id=organization_id,
+        content_type="image/jpeg",
+        byte_size=1,
+        sha256="a" * 64,
+        kind="photo",
+        phase="before",
+        visit_id=visit_id,
+        report_id=None,
+    )
+
+    async with get_sessionmaker()() as session:
+        stored_visit_id = await session.scalar(
+            select(media_assets_table.c.visit_id).where(
+                media_assets_table.c.id == asset.id
+            )
+        )
+    assert stored_visit_id == visit_id
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_visit_with_linked_media_is_blocked(clean_media_assets):
+    organization_id = uuid4()
+    visit_id = uuid4()
+    await _insert_visit(visit_id, organization_id)
+    async with get_sessionmaker()() as session, session.begin():
+        await session.execute(
+            insert(media_assets_table).values(
+                id=uuid4(),
+                organization_id=organization_id,
+                storage_key="test/linked-visit",
+                content_type="image/jpeg",
+                byte_size=1,
+                sha256="a" * 64,
+                kind="photo",
+                phase="before",
+                status="pending_upload",
+                visit_id=visit_id,
+                report_id=None,
+                captured_at=None,
+                uploaded_at=None,
+            )
+        )
+
+    with pytest.raises(IntegrityError):
+        async with get_sessionmaker()() as session, session.begin():
+            await session.execute(
+                delete(visits_table).where(visits_table.c.id == visit_id)
+            )
 
 
 @pytest.mark.asyncio

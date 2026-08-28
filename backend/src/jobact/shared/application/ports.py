@@ -127,6 +127,15 @@ class IdentityProvider(Protocol):
 
 
 @runtime_checkable
+class PasswordHasher(Protocol):
+    """Slow password hashing and constant-shaped password verification."""
+
+    async def hash(self, password: str) -> str: ...
+
+    async def verify(self, password: str, encoded_hash: str | None) -> bool: ...
+
+
+@runtime_checkable
 class PdfRenderer(Protocol):
     """Renders an arbitrary application-supplied `context` into PDF bytes.
 

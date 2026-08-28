@@ -68,7 +68,7 @@ def test_ai_draft_receives_the_suggested_amount_even_at_low_confidence() -> None
     """
     report = make_draft()
 
-    report.apply_ai_draft(
+    report.apply_ai_unified_result(
         work_completed="Replaced the damaged kitchen sink drain and tested for leaks.",
         materials=[],
         amount_cents=1_500,
@@ -85,7 +85,7 @@ def test_an_ai_suggested_amount_is_not_a_human_confirmation() -> None:
     """A suggested price must never itself count as the user confirming it."""
     report = make_draft()
 
-    report.apply_ai_draft(
+    report.apply_ai_unified_result(
         work_completed="Replaced the damaged kitchen sink drain and tested for leaks.",
         materials=[],
         amount_cents=1_500,
@@ -105,7 +105,7 @@ def test_a_user_edit_replaces_the_ai_suggestion_and_is_what_gets_confirmed() -> 
     subsequent confirmation freezes.
     """
     report = make_draft()
-    report.apply_ai_draft(
+    report.apply_ai_unified_result(
         work_completed="Replaced the damaged kitchen sink drain and tested for leaks.",
         materials=[],
         amount_cents=1_500,

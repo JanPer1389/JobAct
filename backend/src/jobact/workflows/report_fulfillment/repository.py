@@ -40,6 +40,7 @@ class WorkflowRunRepository:
                 state_version=run.state_version,
                 correlation_id=run.correlation_id,
                 input_data=run.input_data,
+                claimed_at=run.claimed_at,
             )
         )
 
@@ -76,6 +77,7 @@ class WorkflowRunRepository:
                 next_retry_at=run.next_retry_at,
                 last_error=run.last_error,
                 state_version=run.state_version,
+                claimed_at=run.claimed_at,
             )
         )
         if result.rowcount == 0:
@@ -98,4 +100,5 @@ def _to_domain(row) -> WorkflowRun:
         state_version=row.state_version,
         correlation_id=row.correlation_id,
         input_data=row.input_data,
+        claimed_at=row.claimed_at,
     )

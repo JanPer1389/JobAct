@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type FormEvent } from "react"
 import {
   Plus,
   ArrowRight,
@@ -17,6 +17,8 @@ import {
   ShieldCheck,
   LogOut,
   SlidersHorizontal,
+  KeyRound,
+  Link2,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -28,6 +30,7 @@ import {
   SyncIndicator,
   EmptyState,
   IconButton,
+  Input,
 } from "../ui"
 import { ScreenHeader } from "../ui"
 import { Page, PageHeader } from "../shell"
@@ -41,7 +44,14 @@ import {
   type ReportStatus,
 } from "@/lib/jobact/data"
 import { useNav } from "@/lib/jobact/store"
-import { apiFetch, type CustomerResponse, type ReportResponse } from "@/lib/jobact/api"
+import {
+  apiFetch,
+  JobActApiError,
+  type AuthMethodsResponse,
+  type CustomerResponse,
+  type ReportResponse,
+} from "@/lib/jobact/api"
+import { appLocales, t, type AppLocale } from "@/lib/jobact/i18n"
 
 /* -------------------------------- HOME -------------------------------- */
 
@@ -380,11 +390,8 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
       signatureAssetId: undefined,
       rawNotes: "",
       report: undefined,
-      beforePhotos: 0,
-      afterPhotos: 0,
       beforePhotoAssets: [],
       afterPhotoAssets: [],
-      audit: undefined,
       workCompleted: "",
       amount: "",
       signed: false,
@@ -483,12 +490,111 @@ export function CustomersScreen({ picking = false }: { picking?: boolean }) {
 /* ------------------------------- PROFILE ------------------------------ */
 
 export function ProfileScreen() {
-  const { navigate, reset, session } = useNav()
+  const { navigate, reset, session, setLocale, setSession, locale } = useNav()
+  const [authMethods, setAuthMethods] = useState<AuthMethodsResponse | null>(null)
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [repeatPassword, setRepeatPassword] = useState("")
+  const [securityMessage, setSecurityMessage] = useState("")
+  const [securityError, setSecurityError] = useState("")
+  const [savingPassword, setSavingPassword] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
+  const [savingLocale, setSavingLocale] = useState(false)
+  const [localeError, setLocaleError] = useState("")
   const userLabel = session ? `User ${session.user_id.slice(0, 8)}` : "Signed-out user"
   const organizationLabel = session
     ? `Organization ${session.organization_id.slice(0, 8)}`
     : "No organization"
   const initials = session?.role.slice(0, 2).toUpperCase() ?? "--"
+
+  useEffect(() => {
+    let cancelled = false
+    apiFetch<AuthMethodsResponse>("/api/v1/auth/methods")
+      .then((methods) => {
+        if (!cancelled) setAuthMethods(methods)
+      })
+      .catch(() => {
+        if (!cancelled) setSecurityError("Could not load authentication methods.")
+      })
+
+    const linkResult = new URLSearchParams(window.location.search).get("auth_link")
+    if (linkResult) {
+      setSecurityMessage(
+        linkResult === "google-success"
+          ? "Google is now linked to this account."
+          : "Google could not be linked. Please try again.",
+      )
+      window.history.replaceState({}, "", window.location.pathname)
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function savePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSecurityError("")
+    setSecurityMessage("")
+    if (newPassword !== repeatPassword) {
+      setSecurityError("Passwords do not match.")
+      return
+    }
+    setSavingPassword(true)
+    try {
+      await apiFetch<void>("/api/v1/auth/password", {
+        method: "PUT",
+        body: JSON.stringify({
+          current_password: authMethods?.password ? currentPassword : null,
+          new_password: newPassword,
+          repeat_password: repeatPassword,
+        }),
+      })
+      setAuthMethods((current) => ({ password: true, google: current?.google ?? false }))
+      setCurrentPassword("")
+      setNewPassword("")
+      setRepeatPassword("")
+      setSecurityMessage(authMethods?.password ? "Password changed." : "Password added.")
+    } catch (error) {
+      setSecurityError(
+        error instanceof JobActApiError
+          ? error.response.detail
+          : "Could not update the password.",
+      )
+    } finally {
+      setSavingPassword(false)
+    }
+  }
+
+  async function signOut() {
+    setLoggingOut(true)
+    try {
+      await apiFetch<void>("/api/v1/auth/logout", { method: "POST" })
+      setSession(null)
+      reset("signin")
+    } catch (error) {
+      setSecurityError(
+        error instanceof JobActApiError ? error.response.detail : "Could not sign out.",
+      )
+      setLoggingOut(false)
+    }
+  }
+
+  async function changeLocale(nextLocale: AppLocale) {
+    if (nextLocale === locale) return
+    const previousLocale = locale
+    setLocaleError("")
+    setLocale(nextLocale)
+    setSavingLocale(true)
+    try {
+      await apiFetch<void>("/api/v1/auth/locale", { method: "PUT", body: JSON.stringify({ locale: nextLocale }) })
+      setSession(session ? { ...session, locale: nextLocale } : session)
+    } catch {
+      setLocale(previousLocale)
+      setLocaleError(t(previousLocale, "languageSaveError"))
+    } finally {
+      setSavingLocale(false)
+    }
+  }
 
   const menu: {
     group: string
@@ -506,7 +612,7 @@ export function ProfileScreen() {
       group: "App",
       items: [
         { label: "Permissions & states", icon: CircleAlert, screen: "states" },
-        { label: "Preferences", icon: SlidersHorizontal, note: "Units, currency" },
+        { label: t(locale, "preferences"), icon: SlidersHorizontal, note: "Units, currency" },
       ],
     },
   ]
@@ -539,6 +645,99 @@ export function ProfileScreen() {
           ))}
         </div>
 
+        <section className="mt-6">
+          <SectionLabel>{t(locale, "preferences")}</SectionLabel>
+          <Card className="p-4 lg:p-5">
+            <label htmlFor="app-language" className="text-sm font-medium text-foreground">{t(locale, "language")}</label>
+            <select
+              id="app-language"
+              value={locale}
+              disabled={savingLocale}
+              onChange={(event) => changeLocale(event.target.value as AppLocale)}
+              className="mt-2 h-10 w-full rounded-xl border border-border bg-card px-3 text-sm text-foreground disabled:opacity-60"
+            >
+              {appLocales.map((option) => <option key={option} value={option}>{t(locale, option === "en-US" ? "english" : "russian")}</option>)}
+            </select>
+            <p aria-live="polite" className="mt-2 min-h-5 text-xs text-destructive">{savingLocale ? t(locale, "saving") : localeError}</p>
+          </Card>
+        </section>
+
+        <section className="mt-6">
+          <SectionLabel>Account security</SectionLabel>
+          <Card className="p-4 lg:p-5">
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="rounded-full border border-border px-2.5 py-1 text-foreground">
+                Password {authMethods?.password ? "enabled" : "not set"}
+              </span>
+              <span className="rounded-full border border-border px-2.5 py-1 text-foreground">
+                Google {authMethods?.google ? "linked" : "not linked"}
+              </span>
+            </div>
+
+            <form className="mt-4 space-y-3" onSubmit={savePassword}>
+              {authMethods?.password && (
+                <Input
+                  id="current-password"
+                  label="Current password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                  required
+                />
+              )}
+              <Input
+                id="new-password"
+                label={authMethods?.password ? "New password" : "Set password"}
+                type="password"
+                autoComplete="new-password"
+                minLength={12}
+                maxLength={128}
+                hint="Use 12–128 characters."
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+                required
+              />
+              <Input
+                id="repeat-new-password"
+                label="Repeat new password"
+                type="password"
+                autoComplete="new-password"
+                value={repeatPassword}
+                onChange={(event) => setRepeatPassword(event.target.value)}
+                error={
+                  repeatPassword && newPassword !== repeatPassword
+                    ? "Passwords do not match."
+                    : undefined
+                }
+                required
+              />
+              <Button type="submit" icon={KeyRound} disabled={savingPassword}>
+                {savingPassword ? "Saving…" : authMethods?.password ? "Change password" : "Set password"}
+              </Button>
+            </form>
+
+            {!authMethods?.google && (
+              <Button
+                type="button"
+                variant="secondary"
+                icon={Link2}
+                className="mt-3"
+                onClick={() => window.location.assign("/api/v1/auth/google/link/start")}
+              >
+                Link Google
+              </Button>
+            )}
+            <div aria-live="polite" className="mt-3 min-h-5 text-sm">
+              {securityError ? (
+                <span className="text-destructive">{securityError}</span>
+              ) : (
+                <span className="text-success">{securityMessage}</span>
+              )}
+            </div>
+          </Card>
+        </section>
+
         {menu.map((section) => (
           <section key={section.group} className="mt-6">
             <SectionLabel>{section.group}</SectionLabel>
@@ -566,9 +765,10 @@ export function ProfileScreen() {
           size="md"
           icon={LogOut}
           className="mt-6 w-full lg:w-auto"
-          onClick={() => reset("signin")}
+          disabled={loggingOut}
+          onClick={signOut}
         >
-          Sign out
+          {loggingOut ? "Signing out…" : "Sign out"}
         </Button>
         <p className="mt-4 text-xs text-muted-foreground">JobAct v1.0 · Made for the field</p>
       </Page>

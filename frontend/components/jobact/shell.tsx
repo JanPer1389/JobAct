@@ -15,6 +15,7 @@ import {
 } from "lucide-react"
 import type { ReactNode } from "react"
 import { useNav, type Screen } from "@/lib/jobact/store"
+import { t } from "@/lib/jobact/i18n"
 import { CURRENT_USER, reports as allReports } from "@/lib/jobact/data"
 import { Logo } from "./ui"
 import { Avatar } from "./cards"
@@ -68,7 +69,7 @@ const operationsNav: NavItem[] = [
 ]
 
 function Sidebar({ active }: { active: Screen }) {
-  const { reset, navigate } = useNav()
+  const { reset, navigate, locale } = useNav()
   const pendingSync = allReports.filter((r) => r.sync !== "synced").length
 
   return (
@@ -87,14 +88,14 @@ function Sidebar({ active }: { active: Screen }) {
           className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Plus className="size-4" strokeWidth={2.4} />
-          New report
+          {t(locale, "newReport")}
         </button>
       </div>
 
       <nav className="mt-7 flex min-h-0 flex-1 flex-col gap-7 overflow-y-auto px-4 pb-4">
-        <NavGroup label="Workspace" items={workspaceNav} active={active} onSelect={reset} />
+        <NavGroup label={t(locale, "workspace")} items={workspaceNav.map((item) => ({ ...item, label: t(locale, item.screen === "home" ? "overview" : item.screen === "reports" ? "reports" : "customers") }))} active={active} onSelect={reset} />
         <NavGroup
-          label="Operations"
+          label={t(locale, "operations")}
           items={operationsNav}
           active={active}
           onSelect={reset}

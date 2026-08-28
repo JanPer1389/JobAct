@@ -25,11 +25,13 @@ async def generate_pdf_for_report(report_id: UUID) -> None:
     if run is None or run.state != WorkflowState.PDF_PENDING:
         return
 
+    settings = get_settings()
     activity = GeneratePdfActivity(
         uow=SqlAlchemyUnitOfWork(),
-        object_storage=S3CompatibleObjectStorage(get_settings()),
+        object_storage=S3CompatibleObjectStorage(settings),
         pdf_renderer=ReportLabPdfRenderer(),
         clock=SystemClock(),
         id_generator=UuidIdGenerator(),
+        render_timeout_seconds=settings.pdf_render_timeout_seconds,
     )
     await activity.run(report_id=report_id, run_id=run.id)

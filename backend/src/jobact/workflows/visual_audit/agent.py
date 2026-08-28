@@ -9,6 +9,7 @@ from pydantic_ai import Agent, BinaryContent
 
 from jobact.contracts.http.v1.visual_audits import VisualAuditResult
 from jobact.shared.application.ports import AiConnector
+from jobact.shared.infrastructure.config import get_settings
 from jobact.workflows.report_fulfillment.agent import LiteLlmCostCapture
 
 _SYSTEM_PROMPT = """You are an independent visual auditor for completed field-service jobs.
@@ -61,18 +62,34 @@ async def run_visual_audit(
     work_description: str,
     provided_price_usd: Decimal | None,
     image_pairs: list[tuple[bytes, str, bytes, str]],
+    customer_service_type: str | None = None,
+    gps_lat: float | None = None,
+    gps_lon: float | None = None,
 ) -> AuditAgentResult:
+    settings = get_settings()
     cost_capture = LiteLlmCostCapture()
-    async with httpx.AsyncClient(event_hooks={"response": [cost_capture.capture]}) as client:
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(
+            settings.ai_request_timeout_seconds,
+            connect=settings.ai_connect_timeout_seconds,
+        ),
+        event_hooks={"response": [cost_capture.capture]},
+    ) as client:
         agent: Agent[None, VisualAuditResult] = Agent(
             connector.build_model("visual-auditor", http_client=client),
             output_type=VisualAuditResult,
             system_prompt=_SYSTEM_PROMPT,
             retries=2,
         )
-        content: list[Any] = [
-            f"Work description: {work_description}\nStated price in USD: {provided_price_usd if provided_price_usd is not None else 'not provided'}"
+        header = [
+            f"Work description: {work_description}",
+            f"Stated price in USD: {provided_price_usd if provided_price_usd is not None else 'not provided'}",
         ]
+        if customer_service_type:
+            header.append(f"Service type: {customer_service_type}")
+        if gps_lat is not None and gps_lon is not None:
+            header.append(f"Visit coordinates: {gps_lat}, {gps_lon}")
+        content: list[Any] = ["\n".join(header)]
         for index, (before, before_type, after, after_type) in enumerate(image_pairs, start=1):
             content.extend([
                 f"BEFORE pair {index}", BinaryContent(data=before, media_type=before_type),

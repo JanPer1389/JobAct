@@ -14,6 +14,7 @@ asserting on what a handler published, or controlling "the current time").
 """
 
 import hashlib
+import hmac
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
@@ -129,6 +130,34 @@ class FakeIdentityProvider:
             return self.identities[code]
         except KeyError:
             raise ValueError(f"no fake identity configured for code {code!r}") from None
+
+
+class FakePasswordHasher:
+    """Deterministic non-cryptographic hasher for handler tests only."""
+
+    @staticmethod
+    async def hash(password: str) -> str:
+        digest = hashlib.sha256(password.encode()).hexdigest()
+        return f"$argon2id$fake${digest}"
+
+    @staticmethod
+    async def verify(password: str, encoded_hash: str | None) -> bool:
+        expected = await FakePasswordHasher.hash(password)
+        return encoded_hash is not None and hmac.compare_digest(
+            encoded_hash, expected
+        )
+
+
+class FakeAuthRateLimiter:
+    def __init__(self, retry_after: int | None = None) -> None:
+        self.retry_after = retry_after
+        self.calls: list[tuple[str, int, int]] = []
+
+    async def check(
+        self, key: str, *, limit: int, window_seconds: int
+    ) -> int | None:
+        self.calls.append((key, limit, window_seconds))
+        return self.retry_after
 
 
 class FakePdfRenderer:

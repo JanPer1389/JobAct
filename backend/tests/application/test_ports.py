@@ -18,6 +18,7 @@ from jobact.shared.application.ports import (
     LlmGateway,
     MessageBroker,
     ObjectStorage,
+    PasswordHasher,
     PdfRenderer,
 )
 from tests.fakes import (
@@ -27,6 +28,7 @@ from tests.fakes import (
     FakeLlmGateway,
     FakeMessageBroker,
     FakeObjectStorage,
+    FakePasswordHasher,
     FakePdfRenderer,
 )
 
@@ -43,6 +45,10 @@ def test_fake_message_broker_satisfies_protocol() -> None:
 
 def test_fake_identity_provider_satisfies_protocol() -> None:
     assert isinstance(FakeIdentityProvider(), IdentityProvider)
+
+
+def test_fake_password_hasher_satisfies_protocol() -> None:
+    assert isinstance(FakePasswordHasher(), PasswordHasher)
 
 
 def test_fake_pdf_renderer_satisfies_protocol() -> None:

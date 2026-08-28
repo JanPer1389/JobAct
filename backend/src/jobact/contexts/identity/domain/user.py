@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
+from jobact.contexts.identity.domain.local_credential import normalize_email
 from jobact.shared.domain import AggregateRoot
 
 
@@ -51,7 +52,7 @@ class User(AggregateRoot):
     ) -> None:
         super().__init__()
         self.id = id
-        self.email = email
+        self.email = normalize_email(email)
         self.email_verified = email_verified
         self.status = status
         self.locale = locale
@@ -122,9 +123,17 @@ class User(AggregateRoot):
     def touch_last_seen(self, now: datetime) -> None:
         self.last_seen_at = now
 
+    def change_locale(self, locale: str) -> None:
+        if locale not in {"en-US", "ru-RU"}:
+            raise ValueError("Unsupported locale")
+        self.locale = locale
+
     def change_email(self, email: str, email_verified: bool) -> None:
         """Update this user's email (e.g. when a linked identity provider
         reports a new email on a later sign-in).
         """
-        self.email = email
+        self.email = normalize_email(email)
         self.email_verified = email_verified
+
+    def has_linked_identity(self, provider: str) -> bool:
+        return any(linked.provider == provider for linked in self.linked_identities)

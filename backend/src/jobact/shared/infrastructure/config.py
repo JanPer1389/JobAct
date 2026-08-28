@@ -50,6 +50,9 @@ class Settings(BaseSettings):
 
     # --- MinIO / S3 -------------------------------------------------------
     minio_endpoint_url: str = "http://localhost:9000"
+    # Browser-facing origin used when signing upload/download URLs. In Docker,
+    # `minio` is resolvable only by containers, while the browser uses localhost.
+    minio_public_endpoint_url: str = "http://localhost:9000"
     minio_access_key: str = "jobact"
     minio_secret_key: str = "jobact-secret"
     minio_bucket_name: str = "jobact-reports"
@@ -59,6 +62,15 @@ class Settings(BaseSettings):
     litellm_master_key: str = "sk-jobact-litellm"
     openrouter_api_key: str = ""
     anthropic_api_key: str = ""
+
+    # --- External call timeouts ---------------------------------------
+    # Every outbound AI/storage call is bounded so a hung provider parks
+    # the workflow in MANUAL_INPUT_REQUIRED instead of stalling forever.
+    ai_request_timeout_seconds: float = 600.0
+    ai_connect_timeout_seconds: float = 5.0
+    object_storage_connect_timeout_seconds: float = 5.0
+    object_storage_read_timeout_seconds: float = 20.0
+    pdf_render_timeout_seconds: float = 15.0
 
     # --- Local, deliberately dated FX snapshot -----------------------
     usd_rub_rate: Decimal = Decimal("84.4635")
@@ -75,7 +87,7 @@ class Settings(BaseSettings):
     session_secret: str = "change-me"
 
     # --- CORS / allowed origins ------------------------------------------
-    app_origins: str = "http://localhost:3000"
+    app_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     @property
     def app_origins_list(self) -> list[str]:

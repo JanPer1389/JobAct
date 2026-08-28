@@ -33,7 +33,7 @@ import {
   type ReportStatus,
 } from "@/lib/jobact/data"
 import { useNav } from "@/lib/jobact/store"
-import { apiFetch, type ReportResponse, type VisualAuditAttemptResponse } from "@/lib/jobact/api"
+import { apiFetch, type ReportResponse } from "@/lib/jobact/api"
 
 /* -------------------------- CUSTOMER DETAIL --------------------------- */
 
@@ -264,20 +264,13 @@ export function BackendReportDetailScreen() {
   const { back, frame } = useNav()
   const reportId = frame.params.reportId as string
   const [report, setReport] = useState<ReportResponse | null>(null)
-  const [audits, setAudits] = useState<VisualAuditAttemptResponse[]>([])
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([
-      apiFetch<ReportResponse>(`/api/v1/reports/${reportId}`),
-      apiFetch<VisualAuditAttemptResponse[]>(`/api/v1/reports/${reportId}/audits`),
-    ])
-      .then(([nextReport, nextAudits]) => {
-        if (!cancelled) {
-          setReport(nextReport)
-          setAudits(nextAudits)
-        }
+    apiFetch<ReportResponse>(`/api/v1/reports/${reportId}`)
+      .then((nextReport) => {
+        if (!cancelled) setReport(nextReport)
       })
       .catch((reason: unknown) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not load report.")
@@ -324,27 +317,29 @@ export function BackendReportDetailScreen() {
               </section>
             )}
             <section>
-              <SectionLabel>Visual audit history</SectionLabel>
-              {audits.length === 0 ? (
-                <Card className="mt-2 p-4 text-sm text-muted-foreground">No visual audit attempts for this report.</Card>
+              <SectionLabel>Before / after comparison</SectionLabel>
+              {revision.visual_comparison === null ? (
+                <Card className="mt-2 p-4 text-sm text-muted-foreground">
+                  No photo comparison is attached to this report.
+                </Card>
               ) : (
-                <div className="mt-2 space-y-3">
-                  {audits.map((audit) => (
-                    <Card key={audit.id} className="p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-sm font-semibold capitalize text-foreground">{audit.result?.verdict.replaceAll("_", " ") ?? audit.status}</p>
-                        <span className="text-xs text-muted-foreground">{audit.before_photo_asset_ids.length} pair{audit.before_photo_asset_ids.length === 1 ? "" : "s"}</span>
-                      </div>
-                      {audit.result && (
-                        <>
-                          <p className="mt-2 text-sm text-muted-foreground">{audit.result.summary}</p>
-                          <p className="mt-2 text-xs text-muted-foreground">Quality {audit.result.quality_assessment.score}/10 · Confidence {audit.result.confidence}% · {audit.result.price_assessment.price_verdict.replaceAll("_", " ")}</p>
-                        </>
-                      )}
-                      <p className="mt-2 text-xs text-muted-foreground">{audit.acknowledged_at ? `Acknowledged: ${audit.acknowledgement_reason}` : "Not acknowledged"}</p>
-                    </Card>
-                  ))}
-                </div>
+                <Card className="mt-2 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold capitalize text-foreground">
+                      {revision.visual_comparison.verdict.replaceAll("_", " ")}
+                    </p>
+                    <span className="text-xs text-muted-foreground">
+                      Quality {revision.visual_comparison.quality_assessment.score}/10 ·
+                      Confidence {revision.visual_comparison.confidence}%
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {revision.visual_comparison.summary}
+                  </p>
+                  <p className="mt-2 text-xs capitalize text-muted-foreground">
+                    Price: {revision.visual_comparison.price_assessment.price_verdict.replaceAll("_", " ")}
+                  </p>
+                </Card>
               )}
             </section>
           </div>

@@ -1,12 +1,14 @@
 """The `Visit` aggregate -- one on-site job for a customer.
 
-Photo counts, GPS, and `raw_notes` are all simulated/plain input in this
-milestone (no real camera/GPS integration) -- see the plan's Task 3.2
-scope. `raw_notes` set here is NOT the authoritative input to AI report
-drafting; `POST /reports.raw_notes` is (a controller ruling recorded in
-this session's plan ledger, avoiding two sources of truth) -- this
-field only exists so a visit can carry notes if a caller separately
-PATCHes them.
+`raw_notes` set here is NOT the authoritative input to AI report
+drafting; `POST /reports.raw_notes` is (avoiding two sources of truth)
+-- this field only exists so a visit can carry notes if a caller
+separately PATCHes them.
+
+`before_photo_count`/`after_photo_count` are legacy client-supplied
+counters, kept for contract compatibility but NOT authoritative:
+readiness is evaluated against real attached `MediaAsset` rows, via
+`evidence_readiness()`.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from datetime import datetime
 from uuid import UUID
 
 from jobact.contexts.visits.domain.events import VisitStarted
+from jobact.contexts.visits.domain.visit_readiness import VisitReadiness
 from jobact.shared.domain.aggregate import AggregateRoot
 
 
@@ -104,3 +107,16 @@ class Visit(AggregateRoot):
             self.after_photo_count = after_photo_count
         if raw_notes is not None:
             self.raw_notes = raw_notes
+
+    def evidence_readiness(
+        self, *, attached_before_count: int, attached_after_count: int
+    ) -> VisitReadiness:
+        return VisitReadiness(
+            has_customer=self.customer_id is not None,
+            has_geolocation=self.gps_lat is not None and self.gps_lon is not None,
+            has_before_photos=attached_before_count >= 1,
+            has_matching_after_photos=(
+                attached_after_count >= 1
+                and attached_after_count == attached_before_count
+            ),
+        )
