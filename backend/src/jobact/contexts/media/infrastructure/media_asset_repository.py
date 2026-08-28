@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import insert, select, update
@@ -80,6 +81,24 @@ class MediaAssetRepository:
         if row is None:
             return None
         return _to_domain(row)
+
+    async def list_attached_pdfs_by_report_ids(
+        self, report_ids: Sequence[UUID], organization_id: UUID
+    ) -> dict[UUID, MediaAsset]:
+        if not report_ids:
+            return {}
+        result = await self._session.execute(
+            select(media_assets_table).where(
+                media_assets_table.c.report_id.in_(report_ids),
+                media_assets_table.c.organization_id == organization_id,
+                media_assets_table.c.kind == "pdf",
+                media_assets_table.c.status == "attached",
+            )
+        )
+        assets = [_to_domain(row) for row in result]
+        return {
+            asset.report_id: asset for asset in assets if asset.report_id is not None
+        }
 
 
 def _to_domain(row) -> MediaAsset:

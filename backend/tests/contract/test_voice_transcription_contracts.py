@@ -169,3 +169,40 @@ def test_list_report_responses_uses_preloaded_runs_for_transcription() -> None:
     assert responses[0].transcription is not None
     assert responses[0].transcription.status == "queued"
     assert responses[0].transcription.media_asset_id == audio_media_asset_id
+
+
+def test_list_report_responses_preserves_failed_workflow_error_and_pdf() -> None:
+    from jobact.apps.api.routers.reports import list_report_responses
+    from jobact.contexts.media.domain.media_asset import MediaAsset
+
+    report = _draft_report()
+    run = WorkflowRun.start(
+        id=uuid4(),
+        organization_id=report.organization_id,
+        workflow_type="report_fulfillment",
+        subject_id=report.id,
+        correlation_id=uuid4(),
+    )
+    run.fail(code="AI_ANALYSIS_TIMEOUT", now=datetime(2026, 8, 28, tzinfo=UTC))
+    pdf = MediaAsset(
+        id=uuid4(),
+        organization_id=report.organization_id,
+        storage_key="reports/JA-2026-0001.pdf",
+        content_type="application/pdf",
+        byte_size=1024,
+        sha256="a" * 64,
+        kind="pdf",
+        phase=None,
+        status="attached",
+        visit_id=None,
+        report_id=report.id,
+        captured_at=None,
+        uploaded_at=datetime(2026, 8, 28, tzinfo=UTC),
+    )
+
+    response = list_report_responses([report], {report.id: run}, {report.id: pdf})[0]
+
+    assert response.workflow_error is not None
+    assert response.workflow_error.code == "AI_ANALYSIS_TIMEOUT"
+    assert response.workflow_error.http_status == 504
+    assert response.pdf_media_asset_id == pdf.id

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Request
 
 from jobact.apps.api.deps import CurrentPrincipal, get_current_principal
 from jobact.apps.api.middleware.correlation import get_correlation_id
+from jobact.contexts.media.domain.media_asset import MediaAsset
 from jobact.contexts.media.infrastructure.media_asset_repository import (
     MediaAssetRepository,
 )
@@ -132,20 +133,35 @@ def transcription_from_workflow(
 
 
 def list_report_responses(
-    reports: Sequence[Report], runs_by_report_id: Mapping[UUID, WorkflowRun]
+    reports: Sequence[Report],
+    runs_by_report_id: Mapping[UUID, WorkflowRun],
+    pdf_assets_by_report_id: Mapping[UUID, MediaAsset] | None = None,
 ) -> list[ReportResponse]:
-    return [
-        _to_response(
-            report,
-            workflow_state=(
-                runs_by_report_id[report.id].state
-                if report.id in runs_by_report_id
-                else None
-            ),
-            transcription=transcription_from_workflow(runs_by_report_id.get(report.id)),
+    pdf_assets_by_report_id = pdf_assets_by_report_id or {}
+    responses = []
+    for report in reports:
+        run = runs_by_report_id.get(report.id)
+        failure = failure_from_code(run.last_error if run is not None else None)
+        pdf_asset = pdf_assets_by_report_id.get(report.id)
+        responses.append(
+            _to_response(
+                report,
+                workflow_state=run.state if run is not None else None,
+                workflow_error=(
+                    WorkflowErrorResponse(
+                        code=failure.code,
+                        http_status=failure.http_status,
+                        message=failure.message,
+                        retryable=failure.retryable,
+                    )
+                    if failure is not None
+                    else None
+                ),
+                pdf_media_asset_id=pdf_asset.id if pdf_asset is not None else None,
+                transcription=transcription_from_workflow(run),
+            )
         )
-        for report in reports
-    ]
+    return responses
 
 
 async def _to_enriched_response(report: Report) -> ReportResponse:
@@ -227,7 +243,12 @@ async def list_reports(
         ).list_by_subject_ids(
             [report.id for report in reports], principal.organization_id
         )
-    return list_report_responses(reports, runs_by_report_id)
+        pdf_assets_by_report_id = await MediaAssetRepository(
+            uow.session
+        ).list_attached_pdfs_by_report_ids(
+            [report.id for report in reports], principal.organization_id
+        )
+    return list_report_responses(reports, runs_by_report_id, pdf_assets_by_report_id)
 
 
 @router.get("/{report_id}", response_model=ReportResponse)
