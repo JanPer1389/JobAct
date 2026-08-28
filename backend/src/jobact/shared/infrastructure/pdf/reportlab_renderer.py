@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     Image,
     Paragraph,
@@ -23,6 +26,7 @@ class ReportLabPdfRenderer:
     """Render the stable report context assembled by ``GeneratePdfActivity``."""
 
     async def render(self, context: dict) -> bytes:
+        _register_cyrillic_fonts()
         buffer = BytesIO()
         document = SimpleDocTemplate(
             buffer,
@@ -35,6 +39,9 @@ class ReportLabPdfRenderer:
         styles = getSampleStyleSheet()
         heading = styles["Heading1"]
         normal = styles["BodyText"]
+        heading.fontName = "NotoSans-Bold"
+        styles["Heading2"].fontName = "NotoSans-Bold"
+        normal.fontName = "NotoSans"
 
         customer = context["customer"]
         gps = context["gps"]
@@ -81,6 +88,18 @@ def _format_gps(gps: dict[str, Any]) -> str:
     return f"{latitude:.6f}, {longitude:.6f}"
 
 
+def _register_cyrillic_fonts() -> None:
+    font_directory = Path(__file__).parent / "fonts"
+    font_files = {
+        "NotoSans": "NotoSans-Regular.ttf",
+        "NotoSans-Bold": "NotoSans-Bold.ttf",
+    }
+    registered_fonts = set(pdfmetrics.getRegisteredFontNames())
+    for font_name, file_name in font_files.items():
+        if font_name not in registered_fonts:
+            pdfmetrics.registerFont(TTFont(font_name, str(font_directory / file_name)))
+
+
 def _table_style(*, header: bool = False) -> TableStyle:
     commands: list[tuple] = [
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
@@ -89,12 +108,13 @@ def _table_style(*, header: bool = False) -> TableStyle:
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
         ("TOPPADDING", (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("FONTNAME", (0, 0), (-1, -1), "NotoSans"),
     ]
     if header:
         commands.extend(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 0), (-1, 0), "NotoSans-Bold"),
             ]
         )
     return TableStyle(commands)
