@@ -627,7 +627,14 @@ export function NotesScreen() {
   }
 
   async function saveNotes() {
-    if (!draft.visitId || tooShort) return
+    const isTypedInput = draft.notesSource === "typed"
+    if (
+      !draft.visitId ||
+      (isTypedInput && tooShort) ||
+      (!isTypedInput && !draft.audioAssetId)
+    ) {
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -734,7 +741,11 @@ export function NotesScreen() {
           disabled={(draft.notesSource === "typed" ? tooShort : !draft.audioAssetId) || saving}
           onClick={saveNotes}
         >
-          {saving ? t(locale, "savingChangesEllipsis") : t(locale, "continueLabel")}
+          {saving
+            ? t(locale, "savingChangesEllipsis")
+            : draft.notesSource === "voice"
+              ? t(locale, "continueToAfterPhoto")
+              : t(locale, "continueLabel")}
         </Button>
       </FlowFooter>
     </>

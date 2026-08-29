@@ -267,7 +267,8 @@ const translations = {
     recordingInProgress: "Recording…",
     preparingRecording: "Preparing recording…",
     uploadingRecording: "Uploading recording…",
-    recordingUploaded: "Voice note uploaded. You can still type notes instead.",
+    recordingUploaded: "Voice note uploaded. Continue to add the after photo; transcription starts automatically after that.",
+    continueToAfterPhoto: "Continue to after photo",
     microphoneUnavailable: "Microphone recording is not supported by this browser.",
 
     // Visit flow — analysis processing
@@ -688,7 +689,8 @@ const translations = {
     recordingInProgress: "Идёт запись…",
     preparingRecording: "Подготовка записи…",
     uploadingRecording: "Загрузка записи…",
-    recordingUploaded: "Голосовая заметка загружена. Вы по-прежнему можете ввести текст.",
+    recordingUploaded: "Голосовая заметка загружена. Продолжите к фото «после» — расшифровка начнётся автоматически.",
+    continueToAfterPhoto: "К фото после",
     microphoneUnavailable: "Запись с микрофона не поддерживается этим браузером.",
 
     uploadingEvidence: "Загрузка доказательств визита",
