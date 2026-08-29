@@ -26,6 +26,7 @@ from jobact.contexts.reports.infrastructure.report_repository import ReportRepos
 from jobact.contexts.visits.domain.visit import Visit
 from jobact.contexts.visits.infrastructure.visit_repository import VisitRepository
 from jobact.shared.application.authorization import AuthorizationError
+from jobact.shared.application.ports import AudioInspection, SpeechTranscription
 from jobact.shared.infrastructure.postgres.engine import get_sessionmaker
 from jobact.shared.infrastructure.postgres.operations_tables import (
     media_assets_table,
@@ -43,12 +44,31 @@ from jobact.shared.infrastructure.postgres.workflow_tables import (
     workflow_runs_table,
     workflow_steps_table,
 )
+from jobact.workflows.report_fulfillment.activities.transcribe_audio import (
+    TranscribeAudioActivity,
+)
 from jobact.workflows.report_fulfillment.repository import WorkflowRunRepository
 from jobact.workflows.report_fulfillment.states import WorkflowState
-from tests.fakes import FakeClock, FakeIdGenerator
+from jobact.workflows.report_fulfillment.transcription_store import (
+    PostgresTranscriptionStore,
+)
+from tests.fakes import FakeClock, FakeIdGenerator, FakeObjectStorage
 
 NOW = datetime(2026, 8, 26, tzinfo=UTC)
 RAW_NOTES = "Replaced the leaking kitchen sink drain and tested for leaks."
+TRANSCRIPT = "Заменил протекающий слив и проверил соединения."
+
+
+class _Inspector:
+    async def inspect(self, data: bytes, declared_content_type: str):
+        return AudioInspection(
+            container="webm", codec="opus", duration_seconds=12.5
+        )
+
+
+class _Transcriber:
+    async def transcribe(self, data: bytes, content_type: str):
+        return SpeechTranscription(text=TRANSCRIPT, language="ru")
 
 # Ordered so FK-referencing rows (visual-audit photos/attempts, workflow
 # steps/runs) are deleted before the report_revisions/media_assets rows
@@ -224,7 +244,7 @@ async def test_create_report_with_attached_audio_starts_transcription_without_no
             (
                 await session.execute(
                     select(outbox_table).where(
-                        outbox_table.c.event_type == "WorkflowStepDispatchRequested"
+                        outbox_table.c.event_type == "TranscriptionDispatchRequested"
                     )
                 )
             )
@@ -239,6 +259,88 @@ async def test_create_report_with_attached_audio_starts_transcription_without_no
     assert dispatch_rows[0]["payload"]["state"] == "TRANSCRIPTION_PENDING"
     assert RAW_NOTES not in str(run.input_data)
     assert RAW_NOTES not in str(dispatch_rows[0]["payload"])
+
+
+@pytest.mark.asyncio
+async def test_transcription_persists_visit_snapshot_and_enqueues_drafting(
+    clean_report_creation_tables,
+) -> None:
+    org_id = uuid4()
+    visit = await _seed_visit(org_id=org_id, before=1, after=1)
+    audio = _audio(org_id, visit.id)
+    async with get_sessionmaker()() as session, session.begin():
+        await MediaAssetRepository(session).add(audio)
+    created = await _handler().handle(
+        organization_id=org_id,
+        visit_id=visit.id,
+        created_by=visit.technician_id,
+        raw_notes=None,
+        audio_media_asset_id=audio.id,
+    )
+    storage = FakeObjectStorage()
+    storage.put(audio.storage_key, b"a" * audio.byte_size, audio.content_type)
+    activity = TranscribeAudioActivity(
+        store=PostgresTranscriptionStore(),
+        object_storage=storage,
+        audio_inspector=_Inspector(),
+        speech_transcriber=_Transcriber(),
+        clock=FakeClock(NOW),
+        id_generator=FakeIdGenerator(),
+    )
+
+    await activity.run(
+        report_id=created.report.id, run_id=created.workflow_run_id
+    )
+
+    async with get_sessionmaker()() as session:
+        persisted_visit = await VisitRepository(session).get_by_id(visit.id)
+        run = await WorkflowRunRepository(session).get_by_id(
+            created.workflow_run_id
+        )
+        step = (
+            (
+                await session.execute(
+                    select(workflow_steps_table).where(
+                        workflow_steps_table.c.run_id == created.workflow_run_id
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        dispatches = (
+            (
+                await session.execute(
+                    select(outbox_table).order_by(outbox_table.c.occurred_at)
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    assert persisted_visit is not None
+    assert persisted_visit.raw_notes == TRANSCRIPT
+    assert run is not None
+    assert run.state is WorkflowState.DRAFTING_PENDING
+    assert run.input_data["drafting"] == {"raw_notes": TRANSCRIPT}
+    assert run.input_data["transcription"] == {
+        "media_asset_id": str(audio.id),
+        "transcript": TRANSCRIPT,
+        "detected_language": "ru",
+    }
+    assert step["output"] == {
+        "container": "webm",
+        "codec": "opus",
+        "duration_seconds": 12.5,
+        "transcript_chars": len(TRANSCRIPT),
+        "detected_language": "ru",
+    }
+    assert TRANSCRIPT not in str(step["output"])
+    assert [row["event_type"] for row in dispatches] == [
+        "TranscriptionDispatchRequested",
+        "WorkflowStepDispatchRequested",
+    ]
+    assert TRANSCRIPT not in str([row["payload"] for row in dispatches])
 
 
 @pytest.mark.asyncio

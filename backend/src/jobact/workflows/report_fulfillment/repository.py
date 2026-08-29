@@ -93,6 +93,7 @@ class WorkflowRunRepository:
                 last_error=run.last_error,
                 state_version=run.state_version,
                 claimed_at=run.claimed_at,
+                input_data=run.input_data,
             )
         )
         if result.rowcount == 0:

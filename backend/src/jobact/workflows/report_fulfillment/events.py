@@ -11,6 +11,7 @@ dispatch durable across an API restart -- unlike an in-process
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from jobact.shared.domain.events import DomainEvent
@@ -22,3 +23,13 @@ class WorkflowStepDispatchRequested(DomainEvent):
     workflow_type: str
     subject_id: UUID
     state: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class TranscriptionDispatchRequested(DomainEvent):
+    organization_id: UUID
+    workflow_type: str
+    subject_id: UUID
+    state: str
+    media_asset_id: UUID
+    not_before: datetime | None = None

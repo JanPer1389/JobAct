@@ -19,7 +19,10 @@ from typing import Any
 from uuid import UUID
 
 from jobact.shared.domain.aggregate import AggregateRoot
-from jobact.workflows.report_fulfillment.events import WorkflowStepDispatchRequested
+from jobact.workflows.report_fulfillment.events import (
+    TranscriptionDispatchRequested,
+    WorkflowStepDispatchRequested,
+)
 from jobact.workflows.report_fulfillment.states import (
     ALLOWED_TRANSITIONS,
     WorkflowState,
@@ -118,19 +121,44 @@ class WorkflowRun(AggregateRoot):
         self.claimed_at = now
         self.state_version += 1
 
+    def can_claim(self, *, now: datetime, lease_seconds: int) -> bool:
+        if self.claimed_at is None:
+            return True
+        return self.claimed_at + timedelta(seconds=lease_seconds) <= now
+
     def request_dispatch(self) -> None:
         """Ask for the current state's step to be executed asynchronously.
 
         Call once, right after `start()` or a `transition_to()` that
         moves the run into a pending state a worker must act on.
         """
+        event_type = (
+            TranscriptionDispatchRequested
+            if self.state == WorkflowState.TRANSCRIPTION_PENDING
+            else WorkflowStepDispatchRequested
+        )
+        event_kwargs: dict[str, Any] = {}
+        if event_type is TranscriptionDispatchRequested:
+            transcription = self.input_data.get("transcription")
+            media_asset_id = (
+                transcription.get("media_asset_id")
+                if isinstance(transcription, dict)
+                else None
+            )
+            if not isinstance(media_asset_id, str):
+                raise ValueError("Transcription dispatch requires an audio media asset.")
+            event_kwargs = {
+                "media_asset_id": UUID(media_asset_id),
+                "not_before": self.next_retry_at,
+            }
         self._record_event(
-            WorkflowStepDispatchRequested(
+            event_type(
                 aggregate_id=self.id,
                 organization_id=self.organization_id,
                 workflow_type=self.workflow_type,
                 subject_id=self.subject_id,
                 state=self.state.value,
+                **event_kwargs,
             )
         )
 
@@ -196,6 +224,7 @@ class WorkflowRun(AggregateRoot):
         """
         self.attempt += 1
         self.last_error = error
+        self.claimed_at = None
         if self.attempt >= max_attempts:
             self.state = WorkflowState.MANUAL_INPUT_REQUIRED
             self.next_retry_at = None

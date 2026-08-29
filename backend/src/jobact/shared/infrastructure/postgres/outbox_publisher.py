@@ -27,6 +27,12 @@ from jobact.shared.infrastructure.postgres.tables import outbox_table
 _BATCH_SIZE = 100
 
 
+def stream_for_event(event_type: str, aggregate_type: str) -> str:
+    if event_type == "TranscriptionDispatchRequested":
+        return "outbox.Transcription"
+    return f"outbox.{aggregate_type}"
+
+
 async def publish_pending_outbox_events(broker: MessageBroker) -> int:
     """Publish every unpublished `platform.outbox` row, oldest first.
 
@@ -55,7 +61,7 @@ async def publish_pending_outbox_events(broker: MessageBroker) -> int:
         rows = result.all()
 
     for row in rows:
-        stream = f"outbox.{row.aggregate_type}"
+        stream = stream_for_event(row.event_type, row.aggregate_type)
         message_payload = {
             "event_id": str(row.id),
             "event_type": row.event_type,

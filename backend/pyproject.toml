@@ -27,6 +27,12 @@ dependencies = [
     "email-validator",
 ]
 
+[project.optional-dependencies]
+stt = [
+    "av",
+    "faster-whisper==1.2.1",
+]
+
 [dependency-groups]
 dev = [
     "pytest",
