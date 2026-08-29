@@ -29,6 +29,17 @@ class CreateReportRequest(BaseModel):
         return self
 
 
+class ManualTranscriptionRequest(BaseModel):
+    raw_notes: str
+
+    @model_validator(mode="after")
+    def validate_notes(self) -> ManualTranscriptionRequest:
+        self.raw_notes = self.raw_notes.strip()
+        if not 20 <= len(self.raw_notes) <= 20_000:
+            raise ValueError("raw_notes must contain 20 to 20,000 non-whitespace characters.")
+        return self
+
+
 class MaterialDto(BaseModel):
     label: str
     qty: str

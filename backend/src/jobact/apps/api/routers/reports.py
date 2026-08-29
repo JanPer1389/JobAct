@@ -21,6 +21,7 @@ from jobact.contexts.reports.application.report_handlers import (
     GetReportHandler,
     GetReportManualRecoveryHandler,
     ListReportsHandler,
+    ManualTranscriptionHandler,
     ReadyForSignatureHandler,
     RetryReportWorkflowHandler,
     SignReportHandler,
@@ -30,6 +31,7 @@ from jobact.contexts.reports.domain.report import Material, Report
 from jobact.contracts.http.v1.reports import (
     CreateReportRequest,
     ManualRecoveryResponse,
+    ManualTranscriptionRequest,
     MaterialDto,
     ReportResponse,
     ReportRevisionResponse,
@@ -285,6 +287,20 @@ async def retry_report_workflow(
     handler = RetryReportWorkflowHandler(uow=SqlAlchemyUnitOfWork())
     report = await handler.handle(
         report_id=report_id, organization_id=principal.organization_id
+    )
+    return await _to_enriched_response(report)
+
+
+@router.post("/{report_id}/transcription/manual", response_model=ReportResponse)
+async def continue_with_manual_transcription(
+    report_id: UUID,
+    body: ManualTranscriptionRequest,
+    principal: CurrentPrincipal = Depends(get_current_principal),
+) -> ReportResponse:
+    report = await ManualTranscriptionHandler(uow=SqlAlchemyUnitOfWork()).handle(
+        report_id=report_id,
+        organization_id=principal.organization_id,
+        raw_notes=body.raw_notes,
     )
     return await _to_enriched_response(report)
 

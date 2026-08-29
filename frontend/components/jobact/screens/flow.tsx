@@ -49,7 +49,8 @@ import {
   type VisitResponse,
 } from "@/lib/jobact/api"
 import { pollReportUntilState } from "@/lib/jobact/polling"
-import { uploadVisitPhoto } from "@/lib/jobact/media"
+import { uploadVisitAudio, uploadVisitPhoto } from "@/lib/jobact/media"
+import { BrowserAudioRecorder, type RecordingState } from "@/lib/jobact/audio-recorder"
 import { analysisInputKey } from "@/lib/jobact/analysis-run"
 import {
   confidenceLabel,
@@ -579,19 +580,54 @@ export function NotesScreen() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const notesKey = useRef(crypto.randomUUID())
+  const recorder = useRef(new BrowserAudioRecorder())
+  const [recordingState, setRecordingState] = useState<RecordingState>("ready")
   const tooShort = notes.trim().length < 20
+
+  useEffect(() => () => recorder.current.release(), [])
+
+  async function recordVoice() {
+    if (!draft.visitId) return
+    setError(null)
+    try {
+      const recording = recorder.current.start(setRecordingState)
+      // Start returns only after stop; a second tap stops the active recorder.
+      const blob = await recording
+      setRecordingState("preparing")
+      const extension = blob.type === "audio/mp4" ? "mp4" : "webm"
+      setRecordingState("uploading")
+      const audioAssetId = await uploadVisitAudio(
+        new File([blob], `voice-note.${extension}`, { type: blob.type }),
+        draft.visitId,
+      )
+      setDraft({ audioAssetId, notesSource: "voice", rawNotes: "" })
+      setNotes("")
+      setRecordingState("ready")
+    } catch (reason) {
+      setRecordingState("failed")
+      setError(reason instanceof Error ? reason.message : t(locale, "microphoneUnavailable"))
+    }
+  }
+
+  function switchToTyped(value: string) {
+    recorder.current.release()
+    setNotes(value)
+    setDraft({ notesSource: "typed", audioAssetId: undefined })
+  }
 
   async function saveNotes() {
     if (!draft.visitId || tooShort) return
     setSaving(true)
     setError(null)
     try {
-      await apiFetch<VisitResponse>(`/api/v1/visits/${draft.visitId}`, {
-        method: "PATCH",
-        headers: { "Idempotency-Key": notesKey.current },
-        body: JSON.stringify({ raw_notes: notes }),
-      })
-      setDraft({ rawNotes: notes })
+      if (draft.notesSource === "typed") {
+        await apiFetch<VisitResponse>(`/api/v1/visits/${draft.visitId}`, {
+          method: "PATCH",
+          headers: { "Idempotency-Key": notesKey.current },
+          body: JSON.stringify({ raw_notes: notes }),
+        })
+        setDraft({ rawNotes: notes })
+      }
       navigate("afterPhotos", frame.params)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t(locale, "couldNotSaveNotes"))
@@ -625,7 +661,7 @@ export function NotesScreen() {
           </span>
           <textarea
             value={notes}
-            onChange={(event) => setNotes(event.target.value)}
+            onChange={(event) => switchToTyped(event.target.value)}
             rows={8}
             autoFocus
             placeholder={t(locale, "workNotesPlaceholder")}
@@ -635,6 +671,27 @@ export function NotesScreen() {
         <p className="mt-2 text-xs text-muted-foreground">
           {tooShort ? t(locale, "tooShortHint") : t(locale, "roughNotesFine")}
         </p>
+        <div className="mt-5 rounded-xl border border-border bg-card p-4">
+          <p className="text-sm font-medium text-foreground">{t(locale, "voiceNotes")}</p>
+          <Button
+            className="mt-3"
+            variant="secondary"
+            icon={Mic}
+            onClick={() => {
+              if (recordingState === "recording") recorder.current.stop()
+              else void recordVoice()
+            }}
+            disabled={recordingState === "preparing" || recordingState === "uploading"}
+          >
+            {recordingState === "recording"
+              ? t(locale, "stopRecording")
+              : t(locale, "startRecording")}
+          </Button>
+          {recordingState === "recording" && <p className="mt-2 text-xs text-muted-foreground">{t(locale, "recordingInProgress")}</p>}
+          {recordingState === "preparing" && <p className="mt-2 text-xs text-muted-foreground">{t(locale, "preparingRecording")}</p>}
+          {recordingState === "uploading" && <p className="mt-2 text-xs text-muted-foreground">{t(locale, "uploadingRecording")}</p>}
+          {draft.audioAssetId && <p className="mt-2 text-xs text-success">{t(locale, "recordingUploaded")}</p>}
+        </div>
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
@@ -642,7 +699,7 @@ export function NotesScreen() {
           size="lg"
           fullWidth
           iconRight={ArrowRight}
-          disabled={tooShort || saving}
+          disabled={(draft.notesSource === "typed" ? tooShort : !draft.audioAssetId) || saving}
           onClick={saveNotes}
         >
           {saving ? t(locale, "savingChangesEllipsis") : t(locale, "continueLabel")}
@@ -668,6 +725,7 @@ export function AnalysisProcessingScreen() {
   const analysisKey = analysisInputKey({
     visitId: draft.visitId,
     rawNotes: draft.rawNotes,
+    audioAssetId: draft.audioAssetId,
     beforePhotoCount: draft.beforePhotoAssets.length,
     afterPhotoCount: draft.afterPhotoAssets.length,
   })
@@ -680,7 +738,7 @@ export function AnalysisProcessingScreen() {
     const currentDraft = current.draft
 
     async function runAnalysis() {
-      if (!currentDraft.visitId || !currentDraft.rawNotes) {
+      if (!currentDraft.visitId || (!currentDraft.rawNotes && !currentDraft.audioAssetId)) {
         throw new Error(t(locale, "visitNotesMissing"))
       }
       if (
@@ -701,10 +759,11 @@ export function AnalysisProcessingScreen() {
           : await apiFetch<ReportResponse>("/api/v1/reports", {
               method: "POST",
               headers: { "Idempotency-Key": reportKey.current },
-              body: JSON.stringify({
-                visit_id: currentDraft.visitId,
-                raw_notes: currentDraft.rawNotes,
-              }),
+              body: JSON.stringify(
+                currentDraft.audioAssetId
+                  ? { visit_id: currentDraft.visitId, audio_media_asset_id: currentDraft.audioAssetId }
+                  : { visit_id: currentDraft.visitId, raw_notes: currentDraft.rawNotes },
+              ),
             })
       if (controller.signal.aborted) return
       current.setDraft({
@@ -717,7 +776,18 @@ export function AnalysisProcessingScreen() {
       const polled = await pollReportUntilState(
         created.id,
         ["REVIEW_PENDING", "MANUAL_INPUT_REQUIRED", "FAILED"],
-        { maxAttempts: 90, signal: controller.signal },
+        {
+          maxAttempts: 90,
+          signal: controller.signal,
+          onValue: (value) => {
+            current.setDraft({ report: value })
+            if (value.workflow_state === "TRANSCRIPTION_PENDING") setActive(1)
+            if (value.transcription?.transcript) {
+              current.setDraft({ rawNotes: value.transcription.transcript })
+              setActive(2)
+            }
+          },
+        },
       )
       if (controller.signal.aborted) return
 
@@ -1102,7 +1172,9 @@ export function EditReportScreen() {
   const typingNotes = Boolean(frame.params.manual) && !draft.reportId
   const parked = Boolean(frame.params.parked)
   const [work, setWork] = useState(
-    (Boolean(frame.params.manual)
+    (parked
+      ? draft.rawNotes
+      : Boolean(frame.params.manual)
       ? draft.rawNotes
       : draft.report?.current_revision.work_completed || draft.workCompleted) || "",
   )
@@ -1143,6 +1215,27 @@ export function EditReportScreen() {
   }
 
   async function save() {
+    if (parked && draft.reportId) {
+      if (work.trim().length < 20) {
+        setError(t(locale, "tooShortHint"))
+        return
+      }
+      setSaving(true)
+      setError(null)
+      try {
+        const resumed = await apiFetch<ReportResponse>(
+          `/api/v1/reports/${draft.reportId}/transcription/manual`,
+          { method: "POST", body: JSON.stringify({ raw_notes: work }) },
+        )
+        setDraft({ rawNotes: work, report: resumed })
+        replace("analysisProcessing", frame.params)
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : t(locale, "couldNotRetryAnalysis"))
+      } finally {
+        setSaving(false)
+      }
+      return
+    }
     if (typingNotes) {
       setDraft({ rawNotes: work })
       replace("analysisProcessing", frame.params)

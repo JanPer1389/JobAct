@@ -92,6 +92,8 @@ export interface DraftState {
   revisionId?: string
   signatureAssetId?: string
   rawNotes: string
+  notesSource: "typed" | "voice"
+  audioAssetId?: string
   report?: ReportResponse
 }
 
@@ -107,6 +109,7 @@ const initialDraft: DraftState = {
   amount: "",
   signed: false,
   rawNotes: "",
+  notesSource: "typed",
 }
 
 const Ctx = createContext<NavContext | null>(null)

@@ -431,6 +431,41 @@ class RetryReportWorkflowHandler:
         return report
 
 
+class ManualTranscriptionHandler:
+    """Replace a parked voice attempt with technician-provided notes."""
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    async def handle(
+        self, *, report_id: UUID, organization_id: UUID, raw_notes: str
+    ) -> Report:
+        async with self._uow:
+            report_repo = ReportRepository(self._uow.session)
+            report = await report_repo.get_by_id(report_id)
+            if report is None or report.organization_id != organization_id:
+                raise AuthorizationError("Report does not belong to this organization.")
+            run_repo = WorkflowRunRepository(self._uow.session)
+            run = _authorize_report_workflow(
+                await run_repo.get_by_subject(report_id), report_id, organization_id
+            )
+            if run.state != WorkflowState.MANUAL_INPUT_REQUIRED:
+                raise ReportStateError("Manual transcription is only available for a parked report.")
+            visit_repo = VisitRepository(self._uow.session)
+            visit = await visit_repo.get_by_id(report.visit_id)
+            if visit is None or visit.organization_id != organization_id:
+                raise AuthorizationError("Visit does not belong to this organization.")
+            expected_version = run.state_version
+            visit.update_capture_state(raw_notes=raw_notes)
+            await visit_repo.save(visit)
+            run.input_data = {**run.input_data, "drafting": {"raw_notes": raw_notes}}
+            run.resume_to(WorkflowState.DRAFTING_PENDING)
+            run.request_dispatch()
+            await run_repo.save(run, expected_version=expected_version)
+            self._uow.register(run)
+        return report
+
+
 def _authorize_report_workflow(
     run: WorkflowRun | None, report_id: UUID, organization_id: UUID
 ) -> WorkflowRun:
