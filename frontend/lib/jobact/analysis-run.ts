@@ -1,6 +1,7 @@
 interface AnalysisInput {
   visitId: string | undefined
   rawNotes: string
+  audioAssetId?: string
   beforePhotoCount: number
   afterPhotoCount: number
 }
@@ -11,6 +12,7 @@ export function analysisInputKey(input: AnalysisInput): string {
   return JSON.stringify([
     input.visitId,
     input.rawNotes,
+    input.audioAssetId,
     input.beforePhotoCount,
     input.afterPhotoCount,
   ])

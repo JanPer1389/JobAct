@@ -1,9 +1,6 @@
 """Report fulfillment workflow states and allowed transitions.
 
-Per the plan's deviation #3: `TRANSCRIPTION_PENDING` and
-`DELIVERY_PENDING` are part of the full design but unregistered here --
-no STT, no delivery channel exists in this milestone. The live path is
-`COLLECTING_EVIDENCE -> DRAFTING_PENDING -> REVIEW_PENDING ->
+The live path is `COLLECTING_EVIDENCE -> DRAFTING_PENDING -> REVIEW_PENDING ->
 SIGNATURE_PENDING -> FINALIZATION_PENDING -> PDF_PENDING -> COMPLETED`,
 with `MANUAL_INPUT_REQUIRED` for generic retry exhaustion and `FAILED` for a
 terminal, client-visible AI failure.
@@ -16,6 +13,7 @@ from enum import StrEnum
 
 class WorkflowState(StrEnum):
     COLLECTING_EVIDENCE = "COLLECTING_EVIDENCE"
+    TRANSCRIPTION_PENDING = "TRANSCRIPTION_PENDING"
     DRAFTING_PENDING = "DRAFTING_PENDING"
     REVIEW_PENDING = "REVIEW_PENDING"
     SIGNATURE_PENDING = "SIGNATURE_PENDING"
@@ -37,6 +35,9 @@ TERMINAL_STATES = frozenset(
 # manual, out-of-band operation not modeled as a normal transition.
 ALLOWED_TRANSITIONS: dict[WorkflowState, frozenset[WorkflowState]] = {
     WorkflowState.COLLECTING_EVIDENCE: frozenset(
+        {WorkflowState.DRAFTING_PENDING, WorkflowState.MANUAL_INPUT_REQUIRED}
+    ),
+    WorkflowState.TRANSCRIPTION_PENDING: frozenset(
         {WorkflowState.DRAFTING_PENDING, WorkflowState.MANUAL_INPUT_REQUIRED}
     ),
     WorkflowState.DRAFTING_PENDING: frozenset(

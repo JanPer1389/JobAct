@@ -27,11 +27,12 @@ import {
 } from "../ui"
 import { Page } from "../shell"
 import { useNav } from "@/lib/jobact/store"
+import { t, tPlural } from "@/lib/jobact/i18n"
 
 /* ------------------------------ OFFLINE ------------------------------- */
 
 export function OfflineScreen() {
-  const { back } = useNav()
+  const { back, locale } = useNav()
   const queue = [
     { id: "JA-2026-0482", name: "Ferrer Residence", photos: 2, state: "waiting" as const },
     { id: "JA-2026-0478", name: "Harbor View Offices", photos: 7, state: "waiting" as const },
@@ -39,22 +40,22 @@ export function OfflineScreen() {
 
   return (
     <>
-      <ScreenHeader title="Offline mode" onBack={back} />
+      <ScreenHeader title={t(locale, "offlineModeTitle")} onBack={back} />
       <OfflineBanner />
       <Page width="form">
         <Card className="flex flex-col items-center p-6 text-center">
           <span className="grid size-14 place-items-center rounded-2xl border border-border bg-muted text-muted-foreground">
             <WifiOff className="size-6" />
           </span>
-          <h2 className="mt-4 text-base font-semibold text-foreground">You&apos;re working offline</h2>
+          <h2 className="mt-4 text-base font-semibold text-foreground">{t(locale, "workingOfflineTitle")}</h2>
           <p className="mt-1.5 max-w-[32ch] text-sm leading-relaxed text-muted-foreground text-pretty">
-            Keep going — every report, photo and signature is saved on this device and will sync automatically when you reconnect.
+            {t(locale, "workingOfflineDesc")}
           </p>
         </Card>
 
         <div className="mt-6 flex items-center justify-between">
-          <SectionLabel>Waiting to upload</SectionLabel>
-          <span className="text-xs text-muted-foreground">{queue.length} reports</span>
+          <SectionLabel>{t(locale, "waitingToUpload")}</SectionLabel>
+          <span className="text-xs text-muted-foreground">{tPlural(locale, "reportsCount", queue.length)}</span>
         </div>
         <div className="space-y-2.5">
           {queue.map((q) => (
@@ -64,15 +65,15 @@ export function OfflineScreen() {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-foreground">{q.name}</p>
-                <p className="font-mono text-[11px] text-muted-foreground">{q.id} · {q.photos} photos</p>
+                <p className="font-mono text-[11px] text-muted-foreground">{q.id} · {tPlural(locale, "photosCount", q.photos)}</p>
               </div>
-              <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">Queued</span>
+              <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">{t(locale, "queuedLabel")}</span>
             </Card>
           ))}
         </div>
 
         <p className="mt-6 rounded-xl border border-border bg-card p-3.5 text-xs leading-relaxed text-muted-foreground">
-          The full visit flow — customer, photos, voice, and signature — works without a connection. Nothing is lost.
+          {t(locale, "offlineFooterNote")}
         </p>
       </Page>
     </>
@@ -84,7 +85,7 @@ export function OfflineScreen() {
 type ItemState = "syncing" | "synced" | "failed"
 
 export function SyncScreen() {
-  const { back } = useNav()
+  const { back, locale } = useNav()
   const [items, setItems] = useState<{ id: string; name: string; state: ItemState }[]>([
     { id: "JA-2026-0482", name: "Ferrer Residence", state: "syncing" },
     { id: "JA-2026-0478", name: "Harbor View Offices", state: "syncing" },
@@ -117,7 +118,7 @@ export function SyncScreen() {
 
   return (
     <>
-      <ScreenHeader title="Sync" onBack={back} />
+      <ScreenHeader title={t(locale, "syncTitle")} onBack={back} />
       <Page width="form">
         <Card className="flex flex-col items-center p-6 text-center">
           {syncing ? (
@@ -125,33 +126,33 @@ export function SyncScreen() {
               <span className="grid size-14 place-items-center rounded-2xl bg-muted text-foreground">
                 <RefreshCw className="size-6 animate-spin" />
               </span>
-              <h2 className="mt-4 text-base font-semibold text-foreground">Syncing your visits</h2>
-              <p className="mt-1 text-sm text-muted-foreground">{done} of {items.length} uploaded</p>
+              <h2 className="mt-4 text-base font-semibold text-foreground">{t(locale, "syncingVisits")}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{done} / {items.length}</p>
             </>
           ) : failed ? (
             <>
               <span className="grid size-14 place-items-center rounded-2xl bg-destructive/10 text-destructive">
                 <TriangleAlert className="size-6" />
               </span>
-              <h2 className="mt-4 text-base font-semibold text-foreground">Some uploads failed</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Your data is safe. Retry when you have a better connection.</p>
+              <h2 className="mt-4 text-base font-semibold text-foreground">{t(locale, "someUploadsFailed")}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{t(locale, "dataIsSafeRetry")}</p>
             </>
           ) : (
             <>
               <span className="grid size-14 place-items-center rounded-2xl bg-success/15 text-success">
                 <CircleCheck className="size-6" />
               </span>
-              <h2 className="mt-4 text-base font-semibold text-foreground">All synced</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Every report is backed up and secured.</p>
+              <h2 className="mt-4 text-base font-semibold text-foreground">{t(locale, "allSynced")}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{t(locale, "everyReportBackedUp")}</p>
             </>
           )}
           <div className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Wifi className="size-3.5" /> Connected · Wi-Fi
+            <Wifi className="size-3.5" /> {t(locale, "connectedWifi")}
           </div>
         </Card>
 
         <SectionLabel>
-          <span className="mt-6 block">Queue</span>
+          <span className="mt-6 block">{t(locale, "queueLabel")}</span>
         </SectionLabel>
         <div className="space-y-2.5">
           {items.map((i) => (
@@ -162,7 +163,7 @@ export function SyncScreen() {
               </div>
               {i.state === "failed" ? (
                 <Button size="sm" variant="secondary" icon={RefreshCw} onClick={() => retry(i.id)}>
-                  Retry
+                  {t(locale, "retry")}
                 </Button>
               ) : (
                 <SyncIndicator state={i.state === "syncing" ? "syncing" : "synced"} />
@@ -178,58 +179,58 @@ export function SyncScreen() {
 /* -------------------- PERMISSIONS & ERROR GALLERY --------------------- */
 
 export function StatesScreen() {
-  const { back } = useNav()
+  const { back, locale } = useNav()
 
   const permissionCards = [
     {
       icon: CameraOff,
-      title: "Camera access needed",
-      description: "JobAct needs your camera to capture before and after photos as proof of the visit.",
-      cta: "Open settings",
+      title: t(locale, "cameraAccessTitle"),
+      description: t(locale, "cameraAccessDesc"),
+      cta: t(locale, "openSettingsCta"),
     },
     {
       icon: MicOff,
-      title: "Microphone access needed",
-      description: "Allow the microphone so you can describe the work by voice instead of typing.",
-      cta: "Open settings",
+      title: t(locale, "micAccessTitle"),
+      description: t(locale, "micAccessDesc"),
+      cta: t(locale, "openSettingsCta"),
     },
     {
       icon: MapPinOff,
-      title: "Location access needed",
-      description: "Location confirms where the visit happened. Enable it to attach GPS proof.",
-      cta: "Open settings",
+      title: t(locale, "locationAccessTitle"),
+      description: t(locale, "locationAccessDesc"),
+      cta: t(locale, "openSettingsCta"),
     },
     {
       icon: MapPinOff,
-      title: "GPS unavailable",
-      description: "We couldn't get a fix right now. You can continue and attach the location later.",
-      cta: "Retry",
+      title: t(locale, "gpsUnavailableTitle"),
+      description: t(locale, "gpsUnavailableDesc"),
+      cta: t(locale, "retry"),
     },
     {
       icon: CloudUpload,
-      title: "Upload failed",
-      description: "Photos couldn't be uploaded. They're saved on your device and will retry automatically.",
-      cta: "Retry now",
+      title: t(locale, "uploadFailedTitle"),
+      description: t(locale, "uploadFailedDesc"),
+      cta: t(locale, "retryNowCta"),
     },
     {
       icon: Sparkles,
-      title: "Couldn't process voice note",
-      description: "The report couldn't be generated from your recording. Try again or type the description.",
-      cta: "Try again",
+      title: t(locale, "voiceProcessFailedTitle"),
+      description: t(locale, "voiceProcessFailedDesc"),
+      cta: t(locale, "tryAgain"),
     },
   ]
 
   return (
     <>
       <ScreenHeader
-        title="Permissions & states"
-        subtitle="Preview of edge-case screens"
+        title={t(locale, "permissionsStatesTitle")}
+        subtitle={t(locale, "previewEdgeCase")}
         onBack={back}
         width="wide"
       />
       <Page width="wide">
         <p className="mb-4 max-w-prose text-xs leading-relaxed text-muted-foreground">
-          These are the states JobAct shows when hardware access is blocked or something goes wrong in the field.
+          {t(locale, "statesIntro")}
         </p>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {permissionCards.map((c) => (

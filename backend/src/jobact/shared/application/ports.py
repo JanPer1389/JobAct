@@ -20,6 +20,37 @@ from uuid import UUID
 
 
 @dataclass(frozen=True)
+class AudioInspection:
+    """Sanitized facts derived from the audio bytes at worker time."""
+
+    container: str
+    codec: str
+    duration_seconds: float
+
+
+@dataclass(frozen=True)
+class SpeechTranscription:
+    """Speech-to-text output; text is preserved exactly as produced."""
+
+    text: str
+    language: str | None
+
+
+@runtime_checkable
+class AudioInspector(Protocol):
+    async def inspect(
+        self, data: bytes, declared_content_type: str
+    ) -> AudioInspection: ...
+
+
+@runtime_checkable
+class SpeechTranscriber(Protocol):
+    async def transcribe(
+        self, data: bytes, content_type: str
+    ) -> SpeechTranscription: ...
+
+
+@dataclass(frozen=True)
 class ObjectMetadata:
     """Metadata about an object already stored in `ObjectStorage`, as
     returned by `head()`.

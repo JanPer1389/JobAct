@@ -70,6 +70,7 @@ async def test_three_failures_parks_run_without_blocking_the_report(clean_tables
         revision_id=uuid4(),
         created_at=datetime.now(UTC),
         created_by=uuid4(),
+        currency="RUB",
     )
     async with session_factory() as session, session.begin():
         await ReportRepository(session).add(report)

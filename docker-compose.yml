@@ -132,6 +132,31 @@ services:
         condition: service_started
     command: ["uv", "run", "python", "-m", "jobact.apps.worker"]
 
+  stt-worker:
+    build:
+      context: ./backend
+      target: stt
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT_URL: http://minio:9000
+      HF_HOME: /models
+      UV_NO_SYNC: "1"
+    volumes:
+      - whisper_models:/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    command: ["python", "-m", "jobact.apps.stt_worker"]
+
   frontend:
     build:
       context: ./frontend
@@ -147,3 +172,4 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  whisper_models:

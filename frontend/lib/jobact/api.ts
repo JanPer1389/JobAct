@@ -79,10 +79,17 @@ export interface ReportResponse {
     retryable: boolean
   } | null
   pdf_media_asset_id: string | null
+  transcription?: {
+    status: "queued" | "running" | "completed" | "failed"
+    media_asset_id: string
+    transcript: string | null
+    detected_language: string | null
+  } | null
 }
 
 export type WorkflowState =
   | "COLLECTING_EVIDENCE"
+  | "TRANSCRIPTION_PENDING"
   | "DRAFTING_PENDING"
   | "REVIEW_PENDING"
   | "SIGNATURE_PENDING"

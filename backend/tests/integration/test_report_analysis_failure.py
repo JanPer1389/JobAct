@@ -30,7 +30,7 @@ from jobact.contexts.reports.domain.report import Report
 from jobact.contexts.reports.infrastructure.report_repository import ReportRepository
 from jobact.contexts.visits.domain.visit import Visit
 from jobact.contexts.visits.infrastructure.visit_repository import VisitRepository
-from jobact.contexts.visual_audits.application.fx import LocalFxSnapshot
+from jobact.shared.application.fx import LocalFxSnapshot
 from jobact.shared.infrastructure.config import get_settings
 from jobact.shared.infrastructure.postgres.engine import get_sessionmaker
 from jobact.shared.infrastructure.postgres.operations_tables import (
@@ -131,6 +131,7 @@ async def _seed(org_id, storage: FakeObjectStorage):
         revision_id=uuid4(),
         created_at=NOW,
         created_by=visit.technician_id,
+        currency="RUB",
     )
     run = WorkflowRun.start(
         id=uuid4(),

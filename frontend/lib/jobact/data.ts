@@ -11,6 +11,7 @@ export interface Customer {
   phone: string
   type: string
   visits: number
+  /** ISO 8601 date (no time) -- render with `formatDate`. */
   lastVisit: string | null
 }
 
@@ -26,8 +27,10 @@ export interface Report {
   customerName: string
   address: string
   technician: string
-  date: string
-  time: string
+  /** ISO 8601 visit timestamp -- render with `formatDate`/`formatTime` from
+   *  `lib/jobact/i18n`, never as a pre-formatted string, so it follows the
+   *  selected interface language. */
+  visitedAt: string
   location: string
   coords: string
   workCompleted: string
@@ -55,7 +58,7 @@ export const customers: Customer[] = [
     phone: "+1 (415) 555-0142",
     type: "AC maintenance",
     visits: 7,
-    lastVisit: "Aug 14, 2026",
+    lastVisit: "2026-08-14",
   },
   {
     id: "c2",
@@ -64,7 +67,7 @@ export const customers: Customer[] = [
     phone: "+1 (415) 555-0188",
     type: "Pool service",
     visits: 12,
-    lastVisit: "Aug 19, 2026",
+    lastVisit: "2026-08-19",
   },
   {
     id: "c3",
@@ -73,7 +76,7 @@ export const customers: Customer[] = [
     phone: "+1 (415) 555-0223",
     type: "HVAC repair",
     visits: 3,
-    lastVisit: "Jul 30, 2026",
+    lastVisit: "2026-07-30",
   },
   {
     id: "c4",
@@ -82,7 +85,7 @@ export const customers: Customer[] = [
     phone: "+1 (415) 555-0551",
     type: "Cleaning",
     visits: 21,
-    lastVisit: "Aug 20, 2026",
+    lastVisit: "2026-08-20",
   },
   {
     id: "c5",
@@ -91,7 +94,7 @@ export const customers: Customer[] = [
     phone: "+1 (415) 555-0099",
     type: "Installation",
     visits: 1,
-    lastVisit: "Jun 12, 2026",
+    lastVisit: "2026-06-12",
   },
 ]
 
@@ -102,8 +105,7 @@ export const reports: Report[] = [
     customerName: "Bright Bean Cafe",
     address: "551 Market St",
     technician: "Marco Reyes",
-    date: "Aug 20, 2026",
-    time: "09:42",
+    visitedAt: "2026-08-20T09:42:00",
     location: "551 Market St, San Francisco",
     coords: "37.7897, -122.4001",
     workCompleted:
@@ -125,8 +127,7 @@ export const reports: Report[] = [
     customerName: "Northside Apartments",
     address: "88 Beacon St",
     technician: "Diego Salas",
-    date: "Aug 19, 2026",
-    time: "14:10",
+    visitedAt: "2026-08-19T14:10:00",
     location: "88 Beacon St, San Francisco",
     coords: "37.7921, -122.3968",
     workCompleted:
@@ -148,8 +149,7 @@ export const reports: Report[] = [
     customerName: "Aurora Dental Clinic",
     address: "142 Larkspur Ave, Unit 4",
     technician: "Marco Reyes",
-    date: "Aug 14, 2026",
-    time: "11:05",
+    visitedAt: "2026-08-14T11:05:00",
     location: "142 Larkspur Ave, San Francisco",
     coords: "37.7833, -122.4090",
     workCompleted:
@@ -168,8 +168,7 @@ export const reports: Report[] = [
     customerName: "Ferrer Residence",
     address: "23 Cypress Hollow Rd",
     technician: "Marco Reyes",
-    date: "Aug 22, 2026",
-    time: "08:20",
+    visitedAt: "2026-08-22T08:20:00",
     location: "23 Cypress Hollow Rd, San Francisco",
     coords: "37.7710, -122.4330",
     workCompleted:
@@ -188,8 +187,7 @@ export const reports: Report[] = [
     customerName: "Harbor View Offices",
     address: "9 Quay Terrace, Floor 2",
     technician: "Diego Salas",
-    date: "Aug 12, 2026",
-    time: "16:45",
+    visitedAt: "2026-08-12T16:45:00",
     location: "9 Quay Terrace, San Francisco",
     coords: "37.7955, -122.3936",
     workCompleted:

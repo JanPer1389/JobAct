@@ -113,6 +113,29 @@ def test_drafting_prompt_carries_the_job_context_alongside_the_notes() -> None:
     assert "Replaced a leaking pipe under the sink." in prompt
 
 
+def test_drafting_prompt_defaults_to_english_and_can_request_russian() -> None:
+    english_prompt = build_drafting_prompt(
+        ReportAnalysisContext(
+            raw_notes="Replaced a leaking pipe under the sink.",
+            customer_name="Ada Lovelace",
+            customer_address="12 Analytical Engine Way",
+            customer_service_type="Plumbing",
+        )
+    )
+    russian_prompt = build_drafting_prompt(
+        ReportAnalysisContext(
+            raw_notes="Replaced a leaking pipe under the sink.",
+            customer_name="Ada Lovelace",
+            customer_address="12 Analytical Engine Way",
+            customer_service_type="Plumbing",
+            response_language="Russian",
+        )
+    )
+
+    assert "Response language: English" in english_prompt
+    assert "Response language: Russian" in russian_prompt
+
+
 @pytest.mark.asyncio
 async def test_draft_report_closes_http_client_after_provider_failure(
     monkeypatch: pytest.MonkeyPatch,

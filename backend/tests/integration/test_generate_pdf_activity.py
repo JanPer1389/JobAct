@@ -113,6 +113,7 @@ async def test_generate_pdf_completes_signed_workflow_with_embedded_signature(
         revision_id=uuid4(),
         created_at=now,
         created_by=uuid4(),
+        currency="RUB",
     )
     report.update_revision(
         work_completed="Replaced the damaged sink trap and verified there are no leaks.",

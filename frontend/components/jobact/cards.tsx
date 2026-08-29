@@ -3,7 +3,9 @@
 import { cn } from "@/lib/utils"
 import { ChevronRight, MapPin, Clock, ImageIcon, Camera } from "lucide-react"
 import { StatusBadge, SyncIndicator } from "./ui"
-import { currency, type Customer, type Report } from "@/lib/jobact/data"
+import { type Customer, type Report } from "@/lib/jobact/data"
+import { useNav } from "@/lib/jobact/store"
+import { formatCurrency, formatDate, formatTime, tPlural } from "@/lib/jobact/i18n"
 
 export function Avatar({
   initials,
@@ -42,6 +44,7 @@ export function CustomerCard({
   onClick?: () => void
   selected?: boolean
 }) {
+  const { locale } = useNav()
   return (
     <button
       onClick={onClick}
@@ -57,7 +60,7 @@ export function CustomerCard({
       </div>
       <div className="text-right">
         <p className="text-[11px] text-muted-foreground">{customer.type}</p>
-        <p className="text-[11px] text-muted-foreground/70">{customer.visits} visits</p>
+        <p className="text-[11px] text-muted-foreground/70">{tPlural(locale, "visitsCount", customer.visits)}</p>
       </div>
       <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
     </button>
@@ -73,6 +76,7 @@ export function ReportCard({
   onClick?: () => void
   showTech?: boolean
 }) {
+  const { locale, currency: appCurrency } = useNav()
   return (
     <button
       onClick={onClick}
@@ -92,7 +96,7 @@ export function ReportCard({
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1">
             <Clock className="size-3" />
-            {report.date} · {report.time}
+            {formatDate(locale, report.visitedAt)} · {formatTime(locale, report.visitedAt)}
           </span>
           <span className="inline-flex items-center gap-1">
             <Camera className="size-3" />
@@ -100,12 +104,12 @@ export function ReportCard({
           </span>
         </div>
         <span className="font-mono text-sm font-semibold tabular-nums text-foreground">
-          {currency(report.amount)}
+          {formatCurrency(locale, report.amount, appCurrency)}
         </span>
       </div>
       {showTech && (
         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-          <span>by {report.technician}</span>
+          <span>{report.technician}</span>
           <SyncIndicator state={report.sync} />
         </div>
       )}
@@ -120,6 +124,7 @@ export function VisitCard({
   report: Report
   onClick?: () => void
 }) {
+  const { locale } = useNav()
   return (
     <button
       onClick={onClick}
@@ -142,8 +147,8 @@ export function VisitCard({
         </p>
       </div>
       <div className="text-right">
-        <p className="text-xs font-medium text-foreground">{report.time}</p>
-        <p className="text-[11px] text-muted-foreground">{report.date.split(",")[0]}</p>
+        <p className="text-xs font-medium text-foreground">{formatTime(locale, report.visitedAt)}</p>
+        <p className="text-[11px] text-muted-foreground">{formatDate(locale, report.visitedAt, { month: "short", day: "numeric" })}</p>
       </div>
     </button>
   )

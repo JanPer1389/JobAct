@@ -65,6 +65,7 @@ async def run_visual_audit(
     customer_service_type: str | None = None,
     gps_lat: float | None = None,
     gps_lon: float | None = None,
+    response_language: str = "English",
 ) -> AuditAgentResult:
     settings = get_settings()
     cost_capture = LiteLlmCostCapture()
@@ -84,6 +85,7 @@ async def run_visual_audit(
         header = [
             f"Work description: {work_description}",
             f"Stated price in USD: {provided_price_usd if provided_price_usd is not None else 'not provided'}",
+            f"Response language: {response_language}",
         ]
         if customer_service_type:
             header.append(f"Service type: {customer_service_type}")

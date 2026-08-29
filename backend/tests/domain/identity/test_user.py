@@ -18,6 +18,7 @@ def _new_user() -> User:
         family_name="Tech",
         avatar_url=None,
         locale="en-US",
+        currency="RUB",
         timezone="America/New_York",
         registered_at=datetime.now(UTC),
     )
@@ -57,3 +58,40 @@ def test_touch_last_seen_updates_last_seen_at() -> None:
     user.touch_last_seen(later)
 
     assert user.last_seen_at == later
+
+
+def test_change_currency_accepts_supported_currencies() -> None:
+    user = _new_user()
+
+    user.change_currency("USD")
+    assert user.currency == "USD"
+
+    user.change_currency("RUB")
+    assert user.currency == "RUB"
+
+
+def test_change_currency_rejects_unsupported_currency() -> None:
+    user = _new_user()
+
+    try:
+        user.change_currency("EUR")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Expected ValueError for unsupported currency")
+
+
+def test_change_currency_does_not_affect_locale() -> None:
+    user = _new_user()
+
+    user.change_currency("USD")
+
+    assert user.locale == "en-US"
+
+
+def test_change_locale_does_not_affect_currency() -> None:
+    user = _new_user()
+
+    user.change_locale("ru-RU")
+
+    assert user.currency == "RUB"

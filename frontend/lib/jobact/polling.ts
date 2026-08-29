@@ -5,10 +5,11 @@ export type PollOutcome<T> =
   | { outcome: "timeout" }
   | { outcome: "error"; error: unknown }
 
-interface PollOptions {
+interface PollOptions<T> {
   intervalMs?: number
   maxAttempts?: number
   signal?: AbortSignal
+  onValue?: (value: T) => void
 }
 
 /**
@@ -19,12 +20,13 @@ interface PollOptions {
 export async function pollUntil<T>(
   fetchOnce: () => Promise<T>,
   isTerminal: (value: T) => boolean,
-  { intervalMs = 1000, maxAttempts = 60, signal }: PollOptions = {},
+  { intervalMs = 1000, maxAttempts = 60, signal, onValue }: PollOptions<T> = {},
 ): Promise<PollOutcome<T>> {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (signal?.aborted) return { outcome: "timeout" }
     try {
       const value = await fetchOnce()
+      onValue?.(value)
       if (isTerminal(value)) return { outcome: "terminal", value }
     } catch (error) {
       return { outcome: "error", error }
@@ -38,7 +40,7 @@ export async function pollUntil<T>(
 export function pollReportUntilState(
   reportId: string,
   states: WorkflowState[],
-  options: PollOptions = {},
+  options: PollOptions<ReportResponse> = {},
 ): Promise<PollOutcome<ReportResponse>> {
   return pollUntil(
     () => apiFetch<ReportResponse>(`/api/v1/reports/${reportId}`),

@@ -19,6 +19,7 @@ from jobact.shared.application.ports import Message
 
 _BLOCK_MS = 5_000
 _READ_COUNT = 10
+_STALE_PENDING_MS = 120_000
 
 
 class RedisStreamsBroker:
@@ -41,7 +42,28 @@ class RedisStreamsBroker:
             if "BUSYGROUP" not in str(exc):
                 raise
 
+        claim_cursor = "0-0"
         while True:
+            # Recover messages left pending by a worker that died after
+            # claiming them.  New deliveries still use ">" below, so an
+            # active worker's pending message is never redelivered early.
+            claimed = await self._redis.xautoclaim(
+                stream,
+                group,
+                consumer,
+                min_idle_time=_STALE_PENDING_MS,
+                start_id=claim_cursor,
+                count=_READ_COUNT,
+            )
+            claim_cursor, claimed_entries, _deleted = claimed
+            for entry_id, fields in claimed_entries:
+                payload = json.loads(fields["payload"])
+                yield Message(
+                    id=entry_id,
+                    stream=stream,
+                    payload=payload,
+                    ack=_make_ack(self._redis, stream, group, entry_id),
+                )
             try:
                 response = await self._redis.xreadgroup(
                     group, consumer, {stream: ">"}, count=_READ_COUNT, block=_BLOCK_MS

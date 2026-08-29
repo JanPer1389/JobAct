@@ -26,6 +26,7 @@ from jobact.contexts.reports.infrastructure.report_repository import ReportRepos
 from jobact.contexts.visits.domain.visit import Visit
 from jobact.contexts.visits.infrastructure.visit_repository import VisitRepository
 from jobact.shared.application.authorization import AuthorizationError
+from jobact.shared.application.ports import AudioInspection, SpeechTranscription
 from jobact.shared.infrastructure.postgres.engine import get_sessionmaker
 from jobact.shared.infrastructure.postgres.operations_tables import (
     media_assets_table,
@@ -43,12 +44,31 @@ from jobact.shared.infrastructure.postgres.workflow_tables import (
     workflow_runs_table,
     workflow_steps_table,
 )
+from jobact.workflows.report_fulfillment.activities.transcribe_audio import (
+    TranscribeAudioActivity,
+)
 from jobact.workflows.report_fulfillment.repository import WorkflowRunRepository
 from jobact.workflows.report_fulfillment.states import WorkflowState
-from tests.fakes import FakeClock, FakeIdGenerator
+from jobact.workflows.report_fulfillment.transcription_store import (
+    PostgresTranscriptionStore,
+)
+from tests.fakes import FakeClock, FakeIdGenerator, FakeObjectStorage
 
 NOW = datetime(2026, 8, 26, tzinfo=UTC)
 RAW_NOTES = "Replaced the leaking kitchen sink drain and tested for leaks."
+TRANSCRIPT = "Заменил протекающий слив и проверил соединения."
+
+
+class _Inspector:
+    async def inspect(self, data: bytes, declared_content_type: str):
+        return AudioInspection(
+            container="webm", codec="opus", duration_seconds=12.5
+        )
+
+
+class _Transcriber:
+    async def transcribe(self, data: bytes, content_type: str):
+        return SpeechTranscription(text=TRANSCRIPT, language="ru")
 
 # Ordered so FK-referencing rows (visual-audit photos/attempts, workflow
 # steps/runs) are deleted before the report_revisions/media_assets rows
@@ -101,7 +121,27 @@ def _photo(org_id, visit_id, phase: str, index: int) -> MediaAsset:
     )
 
 
-async def _seed_visit(*, org_id, before: int, after: int, with_gps: bool = True) -> Visit:
+def _audio(org_id, visit_id, *, attached: bool = True) -> MediaAsset:
+    return MediaAsset(
+        id=uuid4(),
+        organization_id=org_id,
+        storage_key=f"{org_id}/voice.webm",
+        content_type="audio/webm",
+        byte_size=1024,
+        sha256="a" * 64,
+        kind="audio",
+        phase=None,
+        status="attached" if attached else "pending_upload",
+        visit_id=visit_id,
+        report_id=None,
+        captured_at=NOW,
+        uploaded_at=NOW if attached else None,
+    )
+
+
+async def _seed_visit(
+    *, org_id, before: int, after: int, with_gps: bool = True
+) -> Visit:
     visit = Visit.start(
         id=uuid4(),
         organization_id=org_id,
@@ -178,6 +218,154 @@ async def test_create_report_enqueues_analysis_without_running_it(
     assert dispatch_rows[0]["published_at"] is None
     assert dispatch_rows[0]["payload"]["state"] == WorkflowState.DRAFTING_PENDING.value
     assert dispatch_rows[0]["payload"]["subject_id"] == str(created.report.id)
+
+
+@pytest.mark.asyncio
+async def test_create_report_with_attached_audio_starts_transcription_without_notes(
+    clean_report_creation_tables,
+) -> None:
+    org_id = uuid4()
+    visit = await _seed_visit(org_id=org_id, before=1, after=1)
+    audio = _audio(org_id, visit.id)
+    async with get_sessionmaker()() as session, session.begin():
+        await MediaAssetRepository(session).add(audio)
+
+    created = await _handler().handle(
+        organization_id=org_id,
+        visit_id=visit.id,
+        created_by=visit.technician_id,
+        raw_notes=None,
+        audio_media_asset_id=audio.id,
+    )
+
+    async with get_sessionmaker()() as session:
+        run = await WorkflowRunRepository(session).get_by_subject(created.report.id)
+        dispatch_rows = (
+            (
+                await session.execute(
+                    select(outbox_table).where(
+                        outbox_table.c.event_type == "TranscriptionDispatchRequested"
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    assert run is not None
+    assert run.state == WorkflowState.TRANSCRIPTION_PENDING
+    assert run.input_data == {"transcription": {"media_asset_id": str(audio.id)}}
+    assert len(dispatch_rows) == 1
+    assert dispatch_rows[0]["payload"]["state"] == "TRANSCRIPTION_PENDING"
+    assert RAW_NOTES not in str(run.input_data)
+    assert RAW_NOTES not in str(dispatch_rows[0]["payload"])
+
+
+@pytest.mark.asyncio
+async def test_transcription_persists_visit_snapshot_and_enqueues_drafting(
+    clean_report_creation_tables,
+) -> None:
+    org_id = uuid4()
+    visit = await _seed_visit(org_id=org_id, before=1, after=1)
+    audio = _audio(org_id, visit.id)
+    async with get_sessionmaker()() as session, session.begin():
+        await MediaAssetRepository(session).add(audio)
+    created = await _handler().handle(
+        organization_id=org_id,
+        visit_id=visit.id,
+        created_by=visit.technician_id,
+        raw_notes=None,
+        audio_media_asset_id=audio.id,
+    )
+    storage = FakeObjectStorage()
+    storage.put(audio.storage_key, b"a" * audio.byte_size, audio.content_type)
+    activity = TranscribeAudioActivity(
+        store=PostgresTranscriptionStore(),
+        object_storage=storage,
+        audio_inspector=_Inspector(),
+        speech_transcriber=_Transcriber(),
+        clock=FakeClock(NOW),
+        id_generator=FakeIdGenerator(),
+    )
+
+    await activity.run(
+        report_id=created.report.id, run_id=created.workflow_run_id
+    )
+
+    async with get_sessionmaker()() as session:
+        persisted_visit = await VisitRepository(session).get_by_id(visit.id)
+        run = await WorkflowRunRepository(session).get_by_id(
+            created.workflow_run_id
+        )
+        step = (
+            (
+                await session.execute(
+                    select(workflow_steps_table).where(
+                        workflow_steps_table.c.run_id == created.workflow_run_id
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        dispatches = (
+            (
+                await session.execute(
+                    select(outbox_table).order_by(outbox_table.c.occurred_at)
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    assert persisted_visit is not None
+    assert persisted_visit.raw_notes == TRANSCRIPT
+    assert run is not None
+    assert run.state is WorkflowState.DRAFTING_PENDING
+    assert run.input_data["drafting"] == {"raw_notes": TRANSCRIPT}
+    assert run.input_data["transcription"] == {
+        "media_asset_id": str(audio.id),
+        "transcript": TRANSCRIPT,
+        "detected_language": "ru",
+    }
+    assert step["output"] == {
+        "container": "webm",
+        "codec": "opus",
+        "duration_seconds": 12.5,
+        "transcript_chars": len(TRANSCRIPT),
+        "detected_language": "ru",
+    }
+    assert TRANSCRIPT not in str(step["output"])
+    assert [row["event_type"] for row in dispatches] == [
+        "TranscriptionDispatchRequested",
+        "WorkflowStepDispatchRequested",
+    ]
+    assert TRANSCRIPT not in str([row["payload"] for row in dispatches])
+
+
+@pytest.mark.asyncio
+async def test_create_report_rejects_audio_from_another_visit_or_not_attached(
+    clean_report_creation_tables,
+) -> None:
+    org_id = uuid4()
+    visit = await _seed_visit(org_id=org_id, before=1, after=1)
+    other_visit = await _seed_visit(org_id=org_id, before=1, after=1)
+    wrong_visit_audio = _audio(org_id, other_visit.id)
+    pending_audio = _audio(org_id, visit.id, attached=False)
+    async with get_sessionmaker()() as session, session.begin():
+        media_repo = MediaAssetRepository(session)
+        await media_repo.add(wrong_visit_audio)
+        await media_repo.add(pending_audio)
+
+    for audio in (wrong_visit_audio, pending_audio):
+        with pytest.raises(AuthorizationError):
+            await _handler().handle(
+                organization_id=org_id,
+                visit_id=visit.id,
+                created_by=visit.technician_id,
+                raw_notes=None,
+                audio_media_asset_id=audio.id,
+            )
 
 
 @pytest.mark.asyncio

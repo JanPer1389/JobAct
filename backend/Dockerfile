@@ -16,3 +16,9 @@ ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 
 CMD ["uvicorn", "jobact.apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# The speech worker is isolated so API/general-worker images do not carry
+# Whisper/PyAV/model dependencies.
+FROM base AS stt
+RUN uv sync --frozen --no-dev --extra stt || uv sync --no-dev --extra stt
+CMD ["python", "-m", "jobact.apps.stt_worker"]

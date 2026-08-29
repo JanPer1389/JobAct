@@ -92,6 +92,7 @@ class Report(AggregateRoot):
         revision_id: UUID,
         created_at: datetime,
         created_by: UUID | None,
+        currency: str,
     ) -> Report:
         return cls(
             id=id,
@@ -105,7 +106,7 @@ class Report(AggregateRoot):
                 source="human",
                 work_completed="",
                 amount_cents=None,
-                currency="RUB",
+                currency=currency,
                 ai_confidence=None,
                 created_at=created_at,
                 created_by=created_by,
@@ -118,7 +119,6 @@ class Report(AggregateRoot):
         work_completed: str,
         materials: list[Material],
         amount_cents: int | None,
-        currency: str,
         ai_confidence: str,
         visual_comparison_status: str | None = None,
         visual_comparison: dict[str, Any] | None = None,
@@ -130,6 +130,13 @@ class Report(AggregateRoot):
         `confirmed_by_user_at`/`amount_confirmed_at`, so
         `mark_ready_for_signature()` still requires an explicit human
         confirmation regardless of `ai_confidence` or the suggested amount.
+
+        Deliberately does not take a `currency` -- the revision's currency
+        is a snapshot of the creating user's preference at report-creation
+        time (see `create_draft`), and stays fixed for the life of the
+        report. `amount_cents` is expected to already be denominated in
+        `revision.currency` (the caller converts the deterministic USD
+        base amount before calling this).
         """
         self._ensure_editable()
         revision = self.current_revision
@@ -137,7 +144,6 @@ class Report(AggregateRoot):
         revision.work_completed = work_completed
         revision.materials = list(materials)
         revision.amount_cents = amount_cents
-        revision.currency = currency
         revision.ai_confidence = ai_confidence
         revision.visual_comparison_status = visual_comparison_status
         revision.visual_comparison = visual_comparison

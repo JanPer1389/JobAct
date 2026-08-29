@@ -15,6 +15,7 @@ def make_draft() -> Report:
         revision_id=uuid4(),
         created_at=datetime(2026, 8, 26, tzinfo=UTC),
         created_by=uuid4(),
+        currency="USD",
     )
 
 
@@ -72,7 +73,6 @@ def test_ai_draft_receives_the_suggested_amount_even_at_low_confidence() -> None
         work_completed="Replaced the damaged kitchen sink drain and tested for leaks.",
         materials=[],
         amount_cents=1_500,
-        currency="USD",
         ai_confidence="low",
     )
 
@@ -89,7 +89,6 @@ def test_an_ai_suggested_amount_is_not_a_human_confirmation() -> None:
         work_completed="Replaced the damaged kitchen sink drain and tested for leaks.",
         materials=[],
         amount_cents=1_500,
-        currency="USD",
         ai_confidence="high",
     )
 
@@ -109,7 +108,6 @@ def test_a_user_edit_replaces_the_ai_suggestion_and_is_what_gets_confirmed() -> 
         work_completed="Replaced the damaged kitchen sink drain and tested for leaks.",
         materials=[],
         amount_cents=1_500,
-        currency="USD",
         ai_confidence="medium",
     )
 
@@ -127,3 +125,29 @@ def test_a_user_edit_replaces_the_ai_suggestion_and_is_what_gets_confirmed() -> 
     assert report.current_revision.amount_cents == 9_900
     assert report.current_revision.amount_confirmed_at == now
     assert report.current_revision.frozen_at == now
+
+
+def test_ai_unified_result_never_changes_the_revision_currency() -> None:
+    """The revision's currency is a snapshot taken at report creation; a
+    later AI-drafted amount must never overwrite it, even though the
+    amount itself is expected to already be denominated in that currency.
+    """
+    report = Report.create_draft(
+        id=uuid4(),
+        organization_id=uuid4(),
+        visit_id=uuid4(),
+        human_id="JA-2026-0002",
+        revision_id=uuid4(),
+        created_at=datetime(2026, 8, 26, tzinfo=UTC),
+        created_by=uuid4(),
+        currency="RUB",
+    )
+
+    report.apply_ai_unified_result(
+        work_completed="Replaced the damaged kitchen sink drain and tested for leaks.",
+        materials=[],
+        amount_cents=126_695,
+        ai_confidence="high",
+    )
+
+    assert report.current_revision.currency == "RUB"

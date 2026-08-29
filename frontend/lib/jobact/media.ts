@@ -65,3 +65,32 @@ export async function uploadVisitPhoto(
   await apiFetch(`/api/v1/media/${upload.media_asset_id}/attach`, { method: "POST" })
   return { assetId: upload.media_asset_id, previewUrl: URL.createObjectURL(jpeg) }
 }
+
+const AUDIO_TYPES = new Set(["audio/webm", "audio/mp4"])
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024
+
+/** Upload a finished microphone recording directly to the private media store. */
+export async function uploadVisitAudio(file: File, visitId: string): Promise<string> {
+  if (!AUDIO_TYPES.has(file.type) || file.size === 0 || file.size > MAX_AUDIO_BYTES) {
+    throw new Error("The recording must be WebM/Opus or MP4/AAC and no larger than 25 MiB.")
+  }
+  const sha256 = await sha256Hex(file)
+  const upload = await apiFetch<MediaUploadResponse>("/api/v1/media/uploads", {
+    method: "POST",
+    body: JSON.stringify({
+      content_type: file.type,
+      byte_size: file.size,
+      sha256,
+      kind: "audio",
+      visit_id: visitId,
+    }),
+  })
+  const response = await fetch(upload.upload_url, {
+    method: "PUT",
+    headers: { "Content-Type": file.type, "x-amz-meta-sha256": sha256 },
+    body: file,
+  })
+  if (!response.ok) throw new Error("Audio upload failed.")
+  await apiFetch(`/api/v1/media/${upload.media_asset_id}/attach`, { method: "POST" })
+  return upload.media_asset_id
+}

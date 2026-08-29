@@ -49,18 +49,33 @@ import {
   type VisitResponse,
 } from "@/lib/jobact/api"
 import { pollReportUntilState } from "@/lib/jobact/polling"
-import { uploadVisitPhoto } from "@/lib/jobact/media"
+import { uploadVisitAudio, uploadVisitPhoto } from "@/lib/jobact/media"
+import { BrowserAudioRecorder, type RecordingState } from "@/lib/jobact/audio-recorder"
 import { analysisInputKey } from "@/lib/jobact/analysis-run"
+import {
+  confidenceLabel,
+  formatCurrency,
+  formatDateTime,
+  statusLabel,
+  t,
+  tPlural,
+  verdictLabel,
+  type AppLocale,
+} from "@/lib/jobact/i18n"
 import type { SignatureCanvasHandle } from "../ui"
 
+function currencySymbol(currency: string | undefined) {
+  return currency === "RUB" ? "₽" : "$"
+}
+
 function useCustomer() {
-  const { frame, draft } = useNav()
+  const { frame, draft, locale } = useNav()
   const id = (frame.params.customerId as string) || draft.customerId
   const known = allCustomers.find((c) => c.id === id)
   return {
-    name: known?.name || draft.customerName || "New customer",
-    address: known?.address || draft.address || "Address on file",
-    type: known?.type || "Service visit",
+    name: known?.name || draft.customerName || t(locale, "newCustomerFallback"),
+    address: known?.address || draft.address || t(locale, "addressOnFileFallback"),
+    type: known?.type || t(locale, "defaultServiceType"),
   }
 }
 
@@ -71,7 +86,7 @@ function FlowFooter({ children }: { children: React.ReactNode }) {
 /* ---------------------------- ADD CUSTOMER ---------------------------- */
 
 export function AddCustomerScreen() {
-  const { back, replace, frame, setDraft } = useNav()
+  const { back, replace, frame, setDraft, locale } = useNav()
   const picking = Boolean(frame.params.picking)
   const [name, setName] = useState("")
   const [address, setAddress] = useState("")
@@ -92,7 +107,7 @@ export function AddCustomerScreen() {
           name,
           address,
           phone,
-          service_type: serviceType || "Service visit",
+          service_type: serviceType || t(locale, "defaultServiceType"),
         }),
       })
       setDraft({
@@ -114,7 +129,7 @@ export function AddCustomerScreen() {
       if (picking) replace("visitStart", { customerId: customer.id })
       else back()
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save customer.")
+      setError(reason instanceof Error ? reason.message : t(locale, "couldNotSaveCustomer"))
     } finally {
       setSaving(false)
     }
@@ -122,13 +137,13 @@ export function AddCustomerScreen() {
 
   return (
     <>
-      <ScreenHeader title="Add customer" onBack={back} />
+      <ScreenHeader title={t(locale, "addCustomerTitle")} onBack={back} />
       <Page width="form">
         <div className="space-y-4">
-          <Input id="name" label="Customer name" placeholder="e.g. Aurora Dental Clinic" value={name} onChange={(e) => setName(e.target.value)} />
-          <Input id="address" label="Address" icon={MapPin} placeholder="Street, unit, city" value={address} onChange={(e) => setAddress(e.target.value)} />
-          <Input id="phone" label="Phone" type="tel" placeholder="+1 (___) ___-____" value={phone} onChange={(e) => setPhone(e.target.value)} />
-          <Input id="type" label="Service type" placeholder="AC maintenance, cleaning, repair…" hint="Optional — helps you find them later" value={serviceType} onChange={(e) => setServiceType(e.target.value)} />
+          <Input id="name" label={t(locale, "customerNameLabel")} placeholder={t(locale, "customerNamePlaceholder")} value={name} onChange={(e) => setName(e.target.value)} />
+          <Input id="address" label={t(locale, "addressLabel")} icon={MapPin} placeholder={t(locale, "addressPlaceholder")} value={address} onChange={(e) => setAddress(e.target.value)} />
+          <Input id="phone" label={t(locale, "phoneLabel")} type="tel" placeholder="+1 (___) ___-____" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <Input id="type" label={t(locale, "serviceTypeLabel")} placeholder={t(locale, "serviceTypePlaceholder")} hint={t(locale, "serviceTypeHint")} value={serviceType} onChange={(e) => setServiceType(e.target.value)} />
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
       </Page>
@@ -140,7 +155,7 @@ export function AddCustomerScreen() {
           iconRight={picking ? ArrowRight : undefined}
           onClick={saveCustomer}
         >
-          {picking ? "Save & continue" : "Save customer"}
+          {picking ? t(locale, "saveAndContinue") : t(locale, "saveCustomerBtn")}
         </Button>
       </FlowFooter>
     </>
@@ -150,7 +165,7 @@ export function AddCustomerScreen() {
 /* ----------------------------- VISIT START ---------------------------- */
 
 export function VisitStartScreen() {
-  const { back, navigate, frame, draft, setDraft } = useNav()
+  const { back, navigate, frame, draft, setDraft, locale } = useNav()
   const customer = useCustomer()
   const now = new Date()
   const visitId = useRef(crypto.randomUUID())
@@ -171,7 +186,7 @@ export function VisitStartScreen() {
       setDraft({ visitId: visit.id })
       navigate("gps", frame.params)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not start visit.")
+      setError(reason instanceof Error ? reason.message : t(locale, "couldNotStartVisit"))
     } finally {
       setSaving(false)
     }
@@ -179,7 +194,7 @@ export function VisitStartScreen() {
 
   return (
     <>
-      <ScreenHeader title="Start visit" subtitle="Step 2 · Confirm the details" onBack={back} step={2} totalSteps={6} />
+      <ScreenHeader title={t(locale, "startVisitTitle")} subtitle={t(locale, "stepConfirmDetails")} onBack={back} step={2} totalSteps={6} />
       <Page width="form">
         <Card className="p-4">
           <div className="flex items-center gap-3">
@@ -194,21 +209,21 @@ export function VisitStartScreen() {
         </Card>
 
         <SectionLabel>
-          <span className="mt-5 block">Visit metadata</span>
+          <span className="mt-5 block">{t(locale, "visitMetadata")}</span>
         </SectionLabel>
         <Card className="divide-y divide-border">
-          <MetaRow icon={Calendar} label="Date" value="August 22, 2026" />
-          <MetaRow icon={Clock} label="Start time" value="09:41 AM" auto />
-          <MetaRow icon={MapPin} label="Location" value="Locating…" pending />
+          <MetaRow icon={Calendar} label={t(locale, "dateLabel")} value={new Intl.DateTimeFormat(locale, { year: "numeric", month: "long", day: "numeric" }).format(now)} />
+          <MetaRow icon={Clock} label={t(locale, "startTimeLabel")} value={new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(now)} auto autoLabel={t(locale, "autoBadge")} />
+          <MetaRow icon={MapPin} label={t(locale, "locationLabel")} value={t(locale, "locatingEllipsis")} pending />
         </Card>
         <p className="mt-3 px-1 text-xs leading-relaxed text-muted-foreground">
-          Date, time and GPS are captured automatically and attached to the report as proof.
+          {t(locale, "dateTimeGpsNote")}
         </p>
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
         <Button size="lg" fullWidth iconRight={ArrowRight} disabled={saving} onClick={startVisit}>
-          {saving ? "Starting visit…" : "Confirm location"}
+          {saving ? t(locale, "startingVisitEllipsis") : t(locale, "confirmLocationBtn")}
         </Button>
       </FlowFooter>
     </>
@@ -220,12 +235,14 @@ function MetaRow({
   label,
   value,
   auto,
+  autoLabel,
   pending,
 }: {
   icon: typeof Clock
   label: string
   value: string
   auto?: boolean
+  autoLabel?: string
   pending?: boolean
 }) {
   return (
@@ -237,7 +254,7 @@ function MetaRow({
       <span className={"text-sm font-medium " + (pending ? "text-muted-foreground" : "text-foreground")}>
         {value}
       </span>
-      {auto && <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">auto</span>}
+      {auto && <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{autoLabel}</span>}
     </div>
   )
 }
@@ -265,25 +282,25 @@ function requestBrowserLocation(): Promise<GeoPoint> {
   })
 }
 
-function describeLocationError(err: unknown): string {
+function describeLocationError(locale: AppLocale, err: unknown): string {
   if (err instanceof Error && err.message === "unsupported") {
-    return "This browser can't share your location. Try a different browser or device."
+    return t(locale, "locErrUnsupported")
   }
   if (typeof err === "object" && err !== null && "code" in err) {
     switch ((err as GeolocationPositionError).code) {
       case 1: // PERMISSION_DENIED
-        return "Location access was denied. Allow location access for this site, then try again."
+        return t(locale, "locErrDenied")
       case 2: // POSITION_UNAVAILABLE
-        return "Your location couldn't be determined. Try moving somewhere with a clearer signal."
+        return t(locale, "locErrUnavailable")
       case 3: // TIMEOUT
-        return "Finding your location took too long. Try again."
+        return t(locale, "locErrTimeout")
     }
   }
-  return "Couldn't get your location. Try again."
+  return t(locale, "locErrGeneric")
 }
 
 export function GpsScreen() {
-  const { back, navigate, frame, draft, setDraft } = useNav()
+  const { back, navigate, frame, draft, setDraft, locale } = useNav()
   const [state, setState] = useState<"locating" | "found" | "error">("locating")
   const [point, setPoint] = useState<GeoPoint | null>(null)
   const [locateError, setLocateError] = useState<string | null>(null)
@@ -301,7 +318,7 @@ export function GpsScreen() {
         setState("found")
       })
       .catch((reason) => {
-        setLocateError(describeLocationError(reason))
+        setLocateError(describeLocationError(locale, reason))
         setState("error")
       })
   }
@@ -327,7 +344,7 @@ export function GpsScreen() {
       setDraft({ gpsLat: point.lat, gpsLon: point.lon, gpsAccuracyM: point.accuracy })
       navigate("beforePhotos", frame.params)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save location.")
+      setError(reason instanceof Error ? reason.message : t(locale, "couldNotSaveLocation"))
     } finally {
       setSaving(false)
     }
@@ -335,7 +352,7 @@ export function GpsScreen() {
 
   return (
     <>
-      <ScreenHeader title="Location" onBack={back} />
+      <ScreenHeader title={t(locale, "locationTitle")} onBack={back} />
       <Page width="form" className="flex flex-col">
         <div className="relative overflow-hidden rounded-3xl border border-border" style={{ height: 260 }}>
           {/* stylised monochrome map */}
@@ -376,18 +393,18 @@ export function GpsScreen() {
 
         <Card className="mt-4 p-4">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-foreground">GPS location</p>
+            <p className="text-sm font-medium text-foreground">{t(locale, "gpsLocationLabel")}</p>
             {state === "found" ? (
               <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
-                <CircleCheck className="size-3.5" /> Confirmed
+                <CircleCheck className="size-3.5" /> {t(locale, "confirmedLabel")}
               </span>
             ) : state === "error" ? (
               <span className="inline-flex items-center gap-1 text-xs font-medium text-destructive">
-                <TriangleAlert className="size-3.5" /> Location needed
+                <TriangleAlert className="size-3.5" /> {t(locale, "locationNeededLabel")}
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                <LoaderCircle className="size-3.5 animate-spin" /> Locating
+                <LoaderCircle className="size-3.5 animate-spin" /> {t(locale, "locatingLabel")}
               </span>
             )}
           </div>
@@ -396,8 +413,8 @@ export function GpsScreen() {
             {state === "found" && point
               ? `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)} · ±${Math.round(point.accuracy)}m`
               : state === "error"
-                ? "Location unavailable"
-                : "Acquiring satellites…"}
+                ? t(locale, "locationUnavailable")
+                : t(locale, "acquiringSatellites")}
           </p>
         </Card>
         {state === "error" && locateError && (
@@ -408,7 +425,7 @@ export function GpsScreen() {
       <FlowFooter>
         {state === "error" ? (
           <Button size="lg" fullWidth iconRight={ArrowRight} onClick={locate}>
-            Try again
+            {t(locale, "tryAgain")}
           </Button>
         ) : (
           <Button
@@ -418,7 +435,7 @@ export function GpsScreen() {
             iconRight={ArrowRight}
             onClick={confirmLocation}
           >
-            {state === "found" ? (saving ? "Saving…" : "Location confirmed") : "Locating…"}
+            {state === "found" ? (saving ? t(locale, "saving") : t(locale, "locationConfirmedBtn")) : t(locale, "locatingEllipsis")}
           </Button>
         )}
       </FlowFooter>
@@ -429,7 +446,7 @@ export function GpsScreen() {
 /* --------------------------- BEFORE PHOTOS ---------------------------- */
 
 export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
-  const { back, navigate, frame, draft, setDraft } = useNav()
+  const { back, navigate, frame, draft, setDraft, locale } = useNav()
   const photos = phase === "before" ? draft.beforePhotoAssets : draft.afterPhotoAssets
   const maxPhotos = phase === "before" ? 6 : draft.beforePhotoAssets.length
   const [uploading, setUploading] = useState(false)
@@ -451,7 +468,7 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
         }
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not upload photo.")
+      setError(reason instanceof Error ? reason.message : t(locale, "couldNotUploadPhoto"))
     } finally {
       setUploading(false)
       if (inputRef.current) inputRef.current.value = ""
@@ -471,7 +488,7 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
   }
 
   const step = phase === "before" ? 3 : 5
-  const title = phase === "before" ? "Before photos" : "After photos"
+  const title = phase === "before" ? t(locale, "beforePhotosTitle") : t(locale, "afterPhotosTitle")
   const next = phase === "before" ? "notes" : "analysisProcessing"
   const count = photos.length
   const pairCountValid = phase === "before" ? count >= 1 : count === draft.beforePhotoAssets.length
@@ -484,7 +501,7 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
     <>
       <ScreenHeader
         title={title}
-        subtitle={phase === "before" ? "Step 3 · Capture the starting state" : "Step 5 · Show the finished work"}
+        subtitle={phase === "before" ? t(locale, "stepCaptureStart") : t(locale, "stepShowFinishedWork")}
         onBack={back}
         step={step}
         totalSteps={6}
@@ -492,7 +509,7 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
       <Page width="form">
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
-            {count} photo{count === 1 ? "" : "s"} captured
+            {tPlural(locale, "photosCaptured", count)}
           </p>
           <span
             className={
@@ -520,10 +537,10 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
           {photos.map((photo, i) => (
             <div key={photo.assetId} className="relative aspect-square overflow-hidden rounded-xl border border-border bg-muted">
               <img src={photo.previewUrl} alt={`${title} ${i + 1}`} className="size-full object-cover" />
-              <span className="absolute bottom-1 left-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white">Pair {i + 1}</span>
+              <span className="absolute bottom-1 left-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{t(locale, "pairLabel", { n: i + 1 })}</span>
               <button
                 type="button"
-                aria-label={`Remove ${title.toLowerCase()} ${i + 1}`}
+                aria-label={t(locale, "removePhotoLabel", { label: title, n: i + 1 })}
                 onClick={() => removeAt(i)}
                 className="absolute right-1 top-1 grid size-7 place-items-center rounded-full bg-black/70 text-white"
               >
@@ -539,16 +556,16 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
           </span>
           <p className="text-xs leading-relaxed text-muted-foreground">
             {phase === "before"
-              ? "Photograph the problem area before you start. These become part of the proof archive."
-              : `Capture exactly ${draft.beforePhotoAssets.length} completed-work photos, in the same order and angles as the before photos.`}
+              ? t(locale, "beforePhotosHint")
+              : t(locale, "afterPhotosHint", { n: draft.beforePhotoAssets.length })}
           </p>
         </Card>
-        {uploading && <p className="mt-3 text-sm text-muted-foreground">Normalizing and uploading photo…</p>}
+        {uploading && <p className="mt-3 text-sm text-muted-foreground">{t(locale, "normalizingUploading")}</p>}
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
         <Button size="lg" fullWidth iconRight={ArrowRight} disabled={!pairCountValid || uploading} onClick={continueFlow}>
-          {phase === "after" ? "Start AI analysis" : "Continue"}
+          {phase === "after" ? t(locale, "startAiAnalysisBtn") : t(locale, "continueLabel")}
         </Button>
       </FlowFooter>
     </>
@@ -558,27 +575,80 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
 /* ------------------------------- NOTES -------------------------------- */
 
 export function NotesScreen() {
-  const { back, navigate, frame, draft, setDraft } = useNav()
+  const { back, navigate, frame, draft, setDraft, locale } = useNav()
   const [notes, setNotes] = useState(draft.rawNotes)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const notesKey = useRef(crypto.randomUUID())
+  const recorder = useRef(new BrowserAudioRecorder())
+  const [recordingState, setRecordingState] = useState<RecordingState>("ready")
   const tooShort = notes.trim().length < 20
 
+  useEffect(() => () => recorder.current.release(), [])
+
+  async function recordVoice() {
+    if (!draft.visitId) return
+    setError(null)
+    try {
+      const recording = recorder.current.start(setRecordingState)
+      // Start returns only after stop; a second tap stops the active recorder.
+      const blob = await recording
+      setRecordingState("preparing")
+      const extension = blob.type === "audio/mp4" ? "mp4" : "webm"
+      setRecordingState("uploading")
+      const audioAssetId = await uploadVisitAudio(
+        new File([blob], `voice-note.${extension}`, { type: blob.type }),
+        draft.visitId,
+      )
+      setDraft({ audioAssetId, notesSource: "voice", rawNotes: "" })
+      setNotes("")
+      setRecordingState("ready")
+    } catch (reason) {
+      setRecordingState("failed")
+      setError(reason instanceof Error ? reason.message : t(locale, "microphoneUnavailable"))
+    }
+  }
+
+  function switchToTyped(value: string) {
+    recorder.current.release()
+    setNotes(value)
+    setDraft({ notesSource: "typed", audioAssetId: undefined })
+  }
+
+  function chooseTyped() {
+    recorder.current.release()
+    setRecordingState("ready")
+    setDraft({ notesSource: "typed", audioAssetId: undefined })
+  }
+
+  function chooseVoice() {
+    setNotes("")
+    setDraft({ notesSource: "voice", rawNotes: "" })
+  }
+
   async function saveNotes() {
-    if (!draft.visitId || tooShort) return
+    const isTypedInput = draft.notesSource === "typed"
+    if (
+      !draft.visitId ||
+      (isTypedInput && tooShort) ||
+      (!isTypedInput && !draft.audioAssetId)
+    ) {
+      return
+    }
     setSaving(true)
     setError(null)
     try {
-      await apiFetch<VisitResponse>(`/api/v1/visits/${draft.visitId}`, {
-        method: "PATCH",
-        headers: { "Idempotency-Key": notesKey.current },
-        body: JSON.stringify({ raw_notes: notes }),
-      })
-      setDraft({ rawNotes: notes })
+      if (draft.notesSource === "typed") {
+        await apiFetch<VisitResponse>(`/api/v1/visits/${draft.visitId}`, {
+          method: "PATCH",
+          headers: { "Idempotency-Key": notesKey.current },
+          body: JSON.stringify({ raw_notes: notes }),
+        })
+        setDraft({ rawNotes: notes })
+      }
       navigate("afterPhotos", frame.params)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save your notes.")
+      setError(reason instanceof Error ? reason.message : t(locale, "couldNotSaveNotes"))
     } finally {
       setSaving(false)
     }
@@ -587,8 +657,8 @@ export function NotesScreen() {
   return (
     <>
       <ScreenHeader
-        title="Describe the work"
-        subtitle="Step 4 · What did you complete?"
+        title={t(locale, "describeWorkTitle")}
+        subtitle={t(locale, "stepDescribeWork")}
         onBack={back}
         step={4}
         totalSteps={6}
@@ -596,32 +666,71 @@ export function NotesScreen() {
       <Page width="form">
         <div>
           <h2 className="text-lg font-semibold text-foreground text-balance">
-            What did you do on this visit?
+            {t(locale, "whatDidYouDo")}
           </h2>
           <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground text-pretty">
-            Mention what you repaired or serviced, any materials used, and the amount
-            charged. The AI turns this and your photos into one report.
+            {t(locale, "whatDidYouDoDesc")}
           </p>
         </div>
 
-        <label className="mt-5 block">
+        <div className="mt-5">
+          <p className="mb-2 text-sm font-medium text-muted-foreground">
+            {t(locale, "chooseInputMethod")}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant={draft.notesSource === "typed" ? "primary" : "secondary"}
+              size="sm"
+              onClick={chooseTyped}
+            >
+              {t(locale, "typedNotes")}
+            </Button>
+            <Button
+              variant={draft.notesSource === "voice" ? "primary" : "secondary"}
+              size="sm"
+              icon={Mic}
+              onClick={chooseVoice}
+            >
+              {t(locale, "recordVoice")}
+            </Button>
+          </div>
+        </div>
+
+        {draft.notesSource === "typed" ? <label className="mt-5 block">
           <span className="mb-1.5 block text-sm font-medium text-muted-foreground">
-            Work notes
+            {t(locale, "workNotesLabel")}
           </span>
           <textarea
             value={notes}
-            onChange={(event) => setNotes(event.target.value)}
+            onChange={(event) => switchToTyped(event.target.value)}
             rows={8}
             autoFocus
-            placeholder="e.g. Diagnosed an intermittent compressor fault. Replaced the start capacitor and cleaned the contactor points. Used one 45uF capacitor. Charged 160."
+            placeholder={t(locale, "workNotesPlaceholder")}
             className="w-full resize-none rounded-xl border border-input bg-card p-4 text-sm leading-relaxed text-foreground focus:border-ring focus:outline-none"
           />
-        </label>
-        <p className="mt-2 text-xs text-muted-foreground">
-          {tooShort
-            ? "Add a little more detail — at least 20 characters."
-            : "Rough notes are fine; the AI cleans them up."}
-        </p>
+        </label> : <div className="mt-5 rounded-xl border border-border bg-card p-4">
+          <p className="text-sm font-medium text-foreground">{t(locale, "voiceNotes")}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t(locale, "whatDidYouDoDesc")}</p>
+          <Button
+            className="mt-3"
+            variant="secondary"
+            icon={Mic}
+            onClick={() => {
+              if (recordingState === "recording") recorder.current.stop()
+              else void recordVoice()
+            }}
+            disabled={recordingState === "preparing" || recordingState === "uploading"}
+          >
+            {recordingState === "recording" ? t(locale, "stopRecording") : t(locale, "startRecording")}
+          </Button>
+          {recordingState === "recording" && <p className="mt-2 text-xs text-muted-foreground">{t(locale, "recordingInProgress")}</p>}
+          {recordingState === "preparing" && <p className="mt-2 text-xs text-muted-foreground">{t(locale, "preparingRecording")}</p>}
+          {recordingState === "uploading" && <p className="mt-2 text-xs text-muted-foreground">{t(locale, "uploadingRecording")}</p>}
+          {draft.audioAssetId && <p className="mt-2 text-xs text-success">{t(locale, "recordingUploaded")}</p>}
+        </div>}
+        {draft.notesSource === "typed" && <p className="mt-2 text-xs text-muted-foreground">
+          {tooShort ? t(locale, "tooShortHint") : t(locale, "roughNotesFine")}
+        </p>}
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
@@ -629,10 +738,14 @@ export function NotesScreen() {
           size="lg"
           fullWidth
           iconRight={ArrowRight}
-          disabled={tooShort || saving}
+          disabled={(draft.notesSource === "typed" ? tooShort : !draft.audioAssetId) || saving}
           onClick={saveNotes}
         >
-          {saving ? "Saving…" : "Continue"}
+          {saving
+            ? t(locale, "savingChangesEllipsis")
+            : draft.notesSource === "voice"
+              ? t(locale, "continueToAfterPhoto")
+              : t(locale, "continueLabel")}
         </Button>
       </FlowFooter>
     </>
@@ -641,14 +754,13 @@ export function NotesScreen() {
 
 /* ------------------------- ANALYSIS PROCESSING ------------------------ */
 
-const ANALYSIS_STEPS = [
-  "Uploading visit evidence",
-  "Drafting the work report",
-  "Comparing before & after photos",
-]
-
 export function AnalysisProcessingScreen() {
-  const { navigate, replace, reset, frame, draft, setDraft } = useNav()
+  const { navigate, replace, reset, frame, draft, setDraft, locale } = useNav()
+  const analysisSteps = [
+    t(locale, "uploadingEvidence"),
+    t(locale, "draftingReport"),
+    t(locale, "comparingPhotos"),
+  ]
   const [active, setActive] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
@@ -656,6 +768,7 @@ export function AnalysisProcessingScreen() {
   const analysisKey = analysisInputKey({
     visitId: draft.visitId,
     rawNotes: draft.rawNotes,
+    audioAssetId: draft.audioAssetId,
     beforePhotoCount: draft.beforePhotoAssets.length,
     afterPhotoCount: draft.afterPhotoAssets.length,
   })
@@ -668,14 +781,14 @@ export function AnalysisProcessingScreen() {
     const currentDraft = current.draft
 
     async function runAnalysis() {
-      if (!currentDraft.visitId || !currentDraft.rawNotes) {
-        throw new Error("Visit notes are missing.")
+      if (!currentDraft.visitId || (!currentDraft.rawNotes && !currentDraft.audioAssetId)) {
+        throw new Error(t(locale, "visitNotesMissing"))
       }
       if (
         currentDraft.beforePhotoAssets.length === 0 ||
         currentDraft.beforePhotoAssets.length !== currentDraft.afterPhotoAssets.length
       ) {
-        throw new Error("Before and after photos must form equal pairs.")
+        throw new Error(t(locale, "photosMustFormPairs"))
       }
 
       setActive(1)
@@ -689,10 +802,11 @@ export function AnalysisProcessingScreen() {
           : await apiFetch<ReportResponse>("/api/v1/reports", {
               method: "POST",
               headers: { "Idempotency-Key": reportKey.current },
-              body: JSON.stringify({
-                visit_id: currentDraft.visitId,
-                raw_notes: currentDraft.rawNotes,
-              }),
+              body: JSON.stringify(
+                currentDraft.audioAssetId
+                  ? { visit_id: currentDraft.visitId, audio_media_asset_id: currentDraft.audioAssetId }
+                  : { visit_id: currentDraft.visitId, raw_notes: currentDraft.rawNotes },
+              ),
             })
       if (controller.signal.aborted) return
       current.setDraft({
@@ -705,15 +819,24 @@ export function AnalysisProcessingScreen() {
       const polled = await pollReportUntilState(
         created.id,
         ["REVIEW_PENDING", "MANUAL_INPUT_REQUIRED", "FAILED"],
-        { maxAttempts: 90, signal: controller.signal },
+        {
+          maxAttempts: 90,
+          signal: controller.signal,
+          onValue: (value) => {
+            current.setDraft({ report: value })
+            if (value.workflow_state === "TRANSCRIPTION_PENDING") setActive(1)
+            if (value.transcription?.transcript) {
+              current.setDraft({ rawNotes: value.transcription.transcript })
+              setActive(2)
+            }
+          },
+        },
       )
       if (controller.signal.aborted) return
 
       if (polled.outcome === "error") throw polled.error
       if (polled.outcome === "timeout") {
-        throw new Error(
-          "The analysis is taking longer than expected. It is still running — check again in a moment.",
-        )
+        throw new Error(t(locale, "analysisTakingLongerError"))
       }
 
       const report = polled.value
@@ -736,8 +859,7 @@ export function AnalysisProcessingScreen() {
       }
       if (report.workflow_state === "FAILED") {
         throw new Error(
-          report.workflow_error?.message ??
-            "The AI analysis could not be completed. Please try again.",
+          report.workflow_error?.message ?? t(locale, "analysisIncompleteError"),
         )
       }
       current.replace("reportDraft", current.frameParams)
@@ -745,9 +867,10 @@ export function AnalysisProcessingScreen() {
 
     runAnalysis().catch((reason: unknown) => {
       if (controller.signal.aborted) return
-      setError(reason instanceof Error ? reason.message : "Could not analyse this visit.")
+      setError(reason instanceof Error ? reason.message : t(locale, "couldNotAnalyseVisit"))
     })
     return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisKey, attempt])
 
   if (error) {
@@ -757,18 +880,18 @@ export function AnalysisProcessingScreen() {
           <TriangleAlert className="size-8 text-warning" />
         </div>
         <h2 className="mt-6 text-lg font-semibold text-foreground">
-          Analysis needs attention
+          {t(locale, "analysisNeedsAttention")}
         </h2>
         <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">{error}</p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
           <Button variant="secondary" onClick={() => replace("afterPhotos", frame.params)}>
-            Review photos
+            {t(locale, "reviewPhotosBtn")}
           </Button>
           <Button
             variant="secondary"
             onClick={() => navigate("editReport", { ...frame.params, manual: true })}
           >
-            Write it manually
+            {t(locale, "writeManuallyBtn")}
           </Button>
           <Button
             onClick={() => {
@@ -777,11 +900,11 @@ export function AnalysisProcessingScreen() {
               setAttempt((value) => value + 1)
             }}
           >
-            Try again
+            {t(locale, "tryAgainAction")}
           </Button>
         </div>
         <Button variant="secondary" size="md" className="mt-6" onClick={() => reset("home")}>
-          Return to workspace
+          {t(locale, "returnToWorkspace")}
         </Button>
       </div>
     )
@@ -793,13 +916,13 @@ export function AnalysisProcessingScreen() {
         <Sparkles className="size-8 text-foreground" />
         <span className="absolute inset-0 rounded-3xl border border-foreground/20 animate-ping" />
       </div>
-      <h2 className="mt-6 text-lg font-semibold text-foreground">Analysing this visit</h2>
+      <h2 className="mt-6 text-lg font-semibold text-foreground">{t(locale, "analysingVisit")}</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        Reading your notes and comparing the photos
+        {t(locale, "analysingVisitDesc")}
       </p>
 
       <div className="mt-8 w-full max-w-xs space-y-3 text-left">
-        {ANALYSIS_STEPS.map((label, index) => (
+        {analysisSteps.map((label, index) => (
           <div key={label} className="flex items-center gap-3">
             <span
               className={
@@ -830,7 +953,7 @@ export function AnalysisProcessingScreen() {
         ))}
       </div>
       <Button variant="secondary" size="md" className="mt-8" onClick={() => reset("home")}>
-        Return to workspace
+        {t(locale, "returnToWorkspace")}
       </Button>
     </div>
   )
@@ -839,7 +962,7 @@ export function AnalysisProcessingScreen() {
 /* --------------------------- REPORT DRAFT ----------------------------- */
 
 export function ReportDraftScreen() {
-  const { back, navigate, replace, frame, draft, setDraft } = useNav()
+  const { back, navigate, replace, frame, draft, setDraft, locale } = useNav()
   const customer = useCustomer()
   const report = draft.report
   const revision = report?.current_revision
@@ -863,7 +986,7 @@ export function ReportDraftScreen() {
       if (confirmed) setDraft({ report: confirmed })
       navigate("signature", frame.params)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not confirm report.")
+      setError(reason instanceof Error ? reason.message : t(locale, "couldNotConfirmReport"))
     } finally {
       setConfirming(false)
     }
@@ -878,15 +1001,15 @@ export function ReportDraftScreen() {
       })
       replace("analysisProcessing", frame.params)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not rerun the analysis.")
+      setError(reason instanceof Error ? reason.message : t(locale, "couldNotRerunAnalysis"))
     }
   }
 
   return (
     <>
       <ScreenHeader
-        title="Report draft"
-        subtitle="Step 6 · Review the generated report"
+        title={t(locale, "reportDraftTitle")}
+        subtitle={t(locale, "stepReviewReport")}
         onBack={back}
         step={6}
         totalSteps={6}
@@ -897,13 +1020,13 @@ export function ReportDraftScreen() {
           <Sparkles className="size-4 text-muted-foreground" />
           <p className="text-xs text-muted-foreground">
             {revision?.source === "ai"
-              ? "AI draft — check the amount and edit anything before signing."
-              : "Review and confirm the report before signing."}
+              ? t(locale, "aiDraftNotice")
+              : t(locale, "reviewConfirmNotice")}
           </p>
         </div>
 
         <SectionLabel>
-          <span className="mt-5 block">Visit</span>
+          <span className="mt-5 block">{t(locale, "visitLabel")}</span>
         </SectionLabel>
         <Card className="p-4">
           <p className="text-sm font-semibold text-foreground">{customer.name}</p>
@@ -911,19 +1034,19 @@ export function ReportDraftScreen() {
             <MapPin className="size-3" /> {customer.address}
           </p>
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span className="inline-flex items-center gap-1"><Calendar className="size-3" /> Aug 22, 2026</span>
-            <span className="inline-flex items-center gap-1"><Clock className="size-3" /> 09:41 AM</span>
-            <span className="inline-flex items-center gap-1"><Camera className="size-3" /> {draft.beforePhotoAssets.length + draft.afterPhotoAssets.length} photos</span>
+            <span className="inline-flex items-center gap-1"><Calendar className="size-3" /> {new Intl.DateTimeFormat(locale, { year: "numeric", month: "short", day: "numeric" }).format(new Date())}</span>
+            <span className="inline-flex items-center gap-1"><Clock className="size-3" /> {new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date())}</span>
+            <span className="inline-flex items-center gap-1"><Camera className="size-3" /> {tPlural(locale, "photosCount", draft.beforePhotoAssets.length + draft.afterPhotoAssets.length)}</span>
           </div>
         </Card>
 
-        <EditableSection title="Work completed" onEdit={() => navigate("editReport", frame.params)}>
+        <EditableSection title={t(locale, "workCompletedLabel")} editLabel={t(locale, "editBtn")} onEdit={() => navigate("editReport", frame.params)}>
           <p className="text-sm leading-relaxed text-foreground">
             {revision?.work_completed || draft.workCompleted}
           </p>
         </EditableSection>
 
-        <EditableSection title="Materials / consumables" onEdit={() => navigate("editReport", frame.params)}>
+        <EditableSection title={t(locale, "materialsLabel")} editLabel={t(locale, "editBtn")} onEdit={() => navigate("editReport", frame.params)}>
           <ul className="space-y-1.5 text-sm text-foreground">
             {(revision?.materials ?? []).map((material) => (
               <li key={`${material.label}-${material.qty}`} className="flex justify-between">
@@ -934,39 +1057,39 @@ export function ReportDraftScreen() {
           </ul>
         </EditableSection>
 
-        <EditableSection title="Amount" onEdit={() => navigate("editReport", frame.params)}>
+        <EditableSection title={t(locale, "amountLabel")} editLabel={t(locale, "editBtn")} onEdit={() => navigate("editReport", frame.params)}>
           <p className="font-mono text-2xl font-semibold text-foreground">
-            {revision?.amount_cents === null
-              ? "Not specified"
-              : `${(revision?.amount_cents ?? 0) / 100} ${revision?.currency ?? "RUB"}`}
+            {revision?.amount_cents === null || revision === undefined
+              ? t(locale, "notSpecified")
+              : formatCurrency(locale, revision.amount_cents / 100, revision.currency)}
           </p>
         </EditableSection>
 
         <SectionLabel>
-          <span className="mt-5 block">Visit evidence</span>
+          <span className="mt-5 block">{t(locale, "visitEvidenceLabel")}</span>
         </SectionLabel>
         <div className="grid grid-cols-2 gap-2.5">
           <Card className="p-3">
-            <p className="mb-2 text-xs font-medium text-muted-foreground">Before</p>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">{t(locale, "beforeLabel")}</p>
             <div className="grid grid-cols-2 gap-1.5">
               {draft.beforePhotoAssets.map((photo, i) => (
                 <img
                   key={photo.assetId}
                   src={photo.previewUrl}
-                  alt={`Before ${i + 1}`}
+                  alt={`${t(locale, "beforeLabel")} ${i + 1}`}
                   className="aspect-square w-full rounded-lg border border-border object-cover"
                 />
               ))}
             </div>
           </Card>
           <Card className="p-3">
-            <p className="mb-2 text-xs font-medium text-muted-foreground">After</p>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">{t(locale, "afterLabel")}</p>
             <div className="grid grid-cols-2 gap-1.5">
               {draft.afterPhotoAssets.map((photo, i) => (
                 <img
                   key={photo.assetId}
                   src={photo.previewUrl}
-                  alt={`After ${i + 1}`}
+                  alt={`${t(locale, "afterLabel")} ${i + 1}`}
                   className="aspect-square w-full rounded-lg border border-border object-cover"
                 />
               ))}
@@ -977,7 +1100,7 @@ export function ReportDraftScreen() {
         {comparison ? (
           <>
             <SectionLabel>
-              <span className="mt-6 block">Before / after comparison</span>
+              <span className="mt-6 block">{t(locale, "beforeAfterComparisonLabel")}</span>
             </SectionLabel>
             <Card className="mt-2 p-5">
               <div className="flex items-start justify-between gap-4">
@@ -1003,26 +1126,25 @@ export function ReportDraftScreen() {
                 ))}
               </ul>
             </Card>
-            <ResultList title="Visually confirmed" items={comparison.comparison.visible_changes} />
-            <ResultList title="Done well" items={comparison.quality_assessment.strengths} />
-            <ResultList title="Issues & suspicious items" items={comparison.quality_assessment.issues} />
-            <ResultList title="Unverified" items={comparison.quality_assessment.unverified_items} />
+            <ResultList title={t(locale, "visuallyConfirmed")} items={comparison.comparison.visible_changes} />
+            <ResultList title={t(locale, "doneWell")} items={comparison.quality_assessment.strengths} />
+            <ResultList title={t(locale, "issuesSuspicious")} items={comparison.quality_assessment.issues} />
+            <ResultList title={t(locale, "unverified")} items={comparison.quality_assessment.unverified_items} />
             <section className="mt-5">
-              <SectionLabel>Price assessment</SectionLabel>
+              <SectionLabel>{t(locale, "priceAssessmentLabel")}</SectionLabel>
               <Card className="mt-2 p-4">
-                <p className="text-sm font-semibold capitalize text-foreground">
-                  {comparison.price_assessment.price_verdict.replaceAll("_", " ")}
+                <p className="text-sm font-semibold text-foreground">
+                  {verdictLabel(locale, comparison.price_assessment.price_verdict)}
                 </p>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                   {comparison.price_assessment.price_explanation}
                 </p>
               </Card>
             </section>
-            <ResultList title="Analysis limitations" items={comparison.limitations} />
-            <ResultList title="Recommended next steps" items={comparison.recommended_next_steps} />
+            <ResultList title={t(locale, "analysisLimitations")} items={comparison.limitations} />
+            <ResultList title={t(locale, "recommendedNextSteps")} items={comparison.recommended_next_steps} />
             <Card className="mt-5 p-4 text-xs leading-relaxed text-muted-foreground">
-              This visual assessment does not substitute for a legal opinion, technical
-              acceptance inspection, or construction expert review.
+              {t(locale, "visualAssessmentDisclaimer")}
             </Card>
           </>
         ) : (
@@ -1030,11 +1152,10 @@ export function ReportDraftScreen() {
             <TriangleAlert className="size-5 shrink-0 text-warning" />
             <div>
               <p className="text-sm font-semibold text-foreground">
-                No photo comparison is attached
+                {t(locale, "noComparisonAttached")}
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Nothing was fabricated. You can rerun the analysis or continue with the
-                written report alone.
+                {t(locale, "noComparisonAttachedDesc")}
               </p>
             </div>
           </Card>
@@ -1044,17 +1165,17 @@ export function ReportDraftScreen() {
         {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
         <div className="space-y-2.5">
           <Button size="lg" fullWidth iconRight={ArrowRight} disabled={confirming} onClick={confirmAndContinue}>
-            {confirming ? "Confirming…" : "Confirm & sign"}
+            {confirming ? t(locale, "confirmingEllipsis") : t(locale, "confirmAndSignBtn")}
           </Button>
           <div className="grid grid-cols-3 gap-2">
             <Button variant="secondary" icon={Pencil} onClick={() => navigate("editReport", frame.params)}>
-              Edit
+              {t(locale, "editBtn")}
             </Button>
             <Button variant="secondary" onClick={() => replace("beforePhotos", frame.params)}>
-              Recapture
+              {t(locale, "recaptureBtn")}
             </Button>
             <Button variant="secondary" onClick={rerunAnalysis}>
-              Rerun
+              {t(locale, "rerunBtn")}
             </Button>
           </div>
         </div>
@@ -1065,10 +1186,12 @@ export function ReportDraftScreen() {
 
 function EditableSection({
   title,
+  editLabel,
   children,
   onEdit,
 }: {
   title: string
+  editLabel: string
   children: React.ReactNode
   onEdit: () => void
 }) {
@@ -1077,7 +1200,7 @@ function EditableSection({
       <div className="mb-2 flex items-center justify-between">
         <SectionLabel>{title}</SectionLabel>
         <button onClick={onEdit} className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
-          <Pencil className="size-3" /> Edit
+          <Pencil className="size-3" /> {editLabel}
         </button>
       </div>
       <Card className="p-4">{children}</Card>
@@ -1088,11 +1211,13 @@ function EditableSection({
 /* ----------------------------- EDIT REPORT ---------------------------- */
 
 export function EditReportScreen() {
-  const { back, replace, frame, draft, setDraft } = useNav()
+  const { back, replace, frame, draft, setDraft, locale } = useNav()
   const typingNotes = Boolean(frame.params.manual) && !draft.reportId
   const parked = Boolean(frame.params.parked)
   const [work, setWork] = useState(
-    (Boolean(frame.params.manual)
+    (parked
+      ? draft.rawNotes
+      : Boolean(frame.params.manual)
       ? draft.rawNotes
       : draft.report?.current_revision.work_completed || draft.workCompleted) || "",
   )
@@ -1126,19 +1251,40 @@ export function EditReportScreen() {
       })
       replace("analysisProcessing", frame.params)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not retry the analysis.")
+      setError(reason instanceof Error ? reason.message : t(locale, "couldNotRetryAnalysis"))
     } finally {
       setRetrying(false)
     }
   }
 
   async function save() {
+    if (parked && draft.reportId) {
+      if (work.trim().length < 20) {
+        setError(t(locale, "tooShortHint"))
+        return
+      }
+      setSaving(true)
+      setError(null)
+      try {
+        const resumed = await apiFetch<ReportResponse>(
+          `/api/v1/reports/${draft.reportId}/transcription/manual`,
+          { method: "POST", body: JSON.stringify({ raw_notes: work }) },
+        )
+        setDraft({ rawNotes: work, report: resumed })
+        replace("analysisProcessing", frame.params)
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : t(locale, "couldNotRetryAnalysis"))
+      } finally {
+        setSaving(false)
+      }
+      return
+    }
     if (typingNotes) {
       setDraft({ rawNotes: work })
       replace("analysisProcessing", frame.params)
       return
     }
-    if (!draft.reportId) return
+    if (!draft.reportId || !draft.report) return
     setSaving(true)
     setError(null)
     try {
@@ -1150,7 +1296,7 @@ export function EditReportScreen() {
           body: JSON.stringify({
             work_completed: work,
             amount_cents: amount ? Math.round(Number(amount) * 100) : null,
-            currency: draft.report?.current_revision.currency ?? "RUB",
+            currency: draft.report.current_revision.currency,
             materials: materials
               .filter((material) => material.label.trim())
               .map(({ label, qty }) => ({ label, qty })),
@@ -1172,7 +1318,7 @@ export function EditReportScreen() {
       })
       replace("reportDraft", frame.params)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save report.")
+      setError(reason instanceof Error ? reason.message : t(locale, "couldNotSaveReport"))
     } finally {
       setSaving(false)
     }
@@ -1181,11 +1327,11 @@ export function EditReportScreen() {
   return (
     <>
       <ScreenHeader
-        title="Edit report"
+        title={t(locale, "editReportTitle")}
         onBack={back}
         right={
           <Button size="sm" onClick={save}>
-            Done
+            {t(locale, "done")}
           </Button>
         }
       />
@@ -1196,27 +1342,26 @@ export function EditReportScreen() {
               <TriangleAlert className="size-5 shrink-0 text-warning" />
               <div>
                 <p className="text-sm font-semibold text-foreground">
-                  AI analysis could not finish
+                  {t(locale, "aiCouldNotFinish")}
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Your notes and photos are saved. Fill the report in yourself, run the
-                  analysis again, or take better photos first.
+                  {t(locale, "aiCouldNotFinishDesc")}
                 </p>
               </div>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2">
               <Button variant="secondary" onClick={() => replace("beforePhotos", frame.params)}>
-                Review photos
+                {t(locale, "reviewPhotosBtn")}
               </Button>
               <Button variant="secondary" disabled={retrying} onClick={retryAnalysis}>
-                {retrying ? "Retrying…" : "Retry analysis"}
+                {retrying ? t(locale, "retryingEllipsis") : t(locale, "retryAnalysisBtn")}
               </Button>
             </div>
           </Card>
         )}
         <label className="block">
           <span className="mb-1.5 block text-sm font-medium text-muted-foreground">
-            Work completed
+            {t(locale, "workCompletedLabel")}
           </span>
           <textarea
             value={work}
@@ -1228,12 +1373,12 @@ export function EditReportScreen() {
 
         <div className="mt-5">
           <div className="mb-2 flex items-center justify-between">
-            <SectionLabel>Materials / consumables</SectionLabel>
+            <SectionLabel>{t(locale, "materialsLabel")}</SectionLabel>
             <button
               onClick={() => setMaterials((m) => [...m, { id: crypto.randomUUID(), label: "", qty: "1" }])}
               className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
             >
-              <Plus className="size-3" /> Add
+              <Plus className="size-3" /> {t(locale, "addBtn")}
             </button>
           </div>
           <div className="space-y-2">
@@ -1248,7 +1393,7 @@ export function EditReportScreen() {
                       ),
                     )
                   }
-                  placeholder="Material"
+                  placeholder={t(locale, "materialPlaceholder")}
                   className="h-11 flex-1 rounded-xl border border-input bg-card px-3 text-sm text-foreground focus:border-ring focus:outline-none"
                 />
                 <input
@@ -1264,7 +1409,7 @@ export function EditReportScreen() {
                 />
                 <button
                   onClick={() => setMaterials((list) => list.filter((x) => x.id !== m.id))}
-                  aria-label="Remove material"
+                  aria-label={t(locale, "removeMaterialLabel")}
                   className="grid size-11 place-items-center rounded-xl text-muted-foreground hover:text-destructive"
                 >
                   <Trash2 className="size-4" />
@@ -1275,13 +1420,19 @@ export function EditReportScreen() {
         </div>
 
         <div className="mt-5">
-          <AmountField label="Amount charged" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
+          <AmountField
+            label={t(locale, "amountChargedLabel")}
+            currencySymbol={currencySymbol(draft.report?.current_revision.currency)}
+            value={amount}
+            onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+            placeholder="0"
+          />
         </div>
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
         <Button size="lg" fullWidth icon={Check} disabled={saving} onClick={save}>
-          {typingNotes ? "Use these notes" : saving ? "Saving…" : "Save changes"}
+          {typingNotes ? t(locale, "useTheseNotesBtn") : saving ? t(locale, "savingChangesEllipsis") : t(locale, "saveChangesBtn")}
         </Button>
       </FlowFooter>
     </>
@@ -1309,9 +1460,9 @@ function ResultList({ title, items }: { title: string; items: string[] }) {
 /* ------------------------------ SIGNATURE ----------------------------- */
 
 export function SignatureScreen() {
-  const { back, navigate, frame, draft, setDraft } = useNav()
+  const { back, navigate, frame, draft, setDraft, locale } = useNav()
   const [hasInk, setHasInk] = useState(false)
-  const [signerName, setSignerName] = useState("On-site manager")
+  const [signerName, setSignerName] = useState(() => t(locale, "defaultSignerName"))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const signatureRef = useRef<SignatureCanvasHandle>(null)
@@ -1331,9 +1482,7 @@ export function SignatureScreen() {
     if (polled.outcome !== "terminal") return false
     setDraft({ report: polled.value })
     if (polled.value.workflow_state === "MANUAL_INPUT_REQUIRED") {
-      throw new Error(
-        "The signed report was saved, but its PDF could not be generated. Retry from the report.",
-      )
+      throw new Error(t(locale, "pdfNotAvailable"))
     }
     navigate("completed", frame.params)
     return true
@@ -1351,7 +1500,7 @@ export function SignatureScreen() {
       }
       if (report?.workflow_state === "PDF_PENDING") {
         if (!(await waitForCompletion())) {
-          throw new Error("PDF generation timed out. The report remains saved.")
+          throw new Error(t(locale, "pdfTimedOut"))
         }
         return
       }
@@ -1367,7 +1516,7 @@ export function SignatureScreen() {
       }
 
       const png = await signatureRef.current?.exportPng()
-      if (!png) throw new Error("Draw a signature before continuing.")
+      if (!png) throw new Error(t(locale, "signatureRequired"))
       const digest = await crypto.subtle.digest("SHA-256", await png.arrayBuffer())
       const sha256 = Array.from(new Uint8Array(digest), (byte) =>
         byte.toString(16).padStart(2, "0"),
@@ -1388,7 +1537,7 @@ export function SignatureScreen() {
         headers: { "Content-Type": "image/png", "x-amz-meta-sha256": sha256 },
         body: png,
       })
-      if (!uploadResponse.ok) throw new Error("Signature upload failed.")
+      if (!uploadResponse.ok) throw new Error(t(locale, "signatureUploadFailed"))
       await apiFetch(`/api/v1/media/${upload.media_asset_id}/attach`, {
         method: "POST",
         headers: { "Idempotency-Key": attachKey.current },
@@ -1411,10 +1560,10 @@ export function SignatureScreen() {
       })
 
       if (!(await waitForCompletion())) {
-        throw new Error("PDF generation timed out. The report remains saved.")
+        throw new Error(t(locale, "pdfTimedOut"))
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not sign report.")
+      setError(reason instanceof Error ? reason.message : t(locale, "couldNotSignReport"))
     } finally {
       setSaving(false)
     }
@@ -1422,26 +1571,25 @@ export function SignatureScreen() {
 
   return (
     <>
-      <ScreenHeader title="Customer confirmation" onBack={back} />
+      <ScreenHeader title={t(locale, "customerConfirmationTitle")} onBack={back} />
       <Page width="form">
         <Card className="p-4">
           <p className="text-sm text-muted-foreground">
-            By signing, <span className="font-medium text-foreground">{customer.name}</span> confirms the work
-            described was completed to their satisfaction.
+            {t(locale, "signingConfirmsText", { name: customer.name })}
           </p>
         </Card>
 
         <div className="mt-5">
-          <SectionLabel>Signature</SectionLabel>
+          <SectionLabel>{t(locale, "signatureLabel")}</SectionLabel>
           <SignatureCanvas ref={signatureRef} onChange={setHasInk} />
         </div>
 
-        <Input id="signer" label="Signed by" placeholder="Name of person signing" value={signerName} onChange={(event) => setSignerName(event.target.value)} className="mt-2" />
+        <Input id="signer" label={t(locale, "signedByLabel")} placeholder={t(locale, "signerNamePlaceholder")} value={signerName} onChange={(event) => setSignerName(event.target.value)} className="mt-2" />
 
         <Card className="mt-4 flex items-center gap-3 p-3.5">
           <ShieldCheck className="size-5 shrink-0 text-muted-foreground" />
           <p className="text-xs leading-relaxed text-muted-foreground">
-            The signature is stored with the timestamp and GPS location as tamper-evident proof.
+            {t(locale, "signatureStoredNote")}
           </p>
         </Card>
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
@@ -1455,10 +1603,10 @@ export function SignatureScreen() {
             disabled={!hasInk || !signerName.trim() || saving}
             onClick={finishReport}
           >
-            {saving ? "Finalizing…" : "Confirm & finish"}
+            {saving ? t(locale, "finalizingEllipsis") : t(locale, "confirmAndFinishBtn")}
           </Button>
           <Button variant="ghost" size="md" fullWidth icon={Share2} onClick={() => navigate("completed", frame.params)}>
-            Send link to sign instead
+            {t(locale, "sendLinkInsteadBtn")}
           </Button>
         </div>
       </FlowFooter>
@@ -1469,26 +1617,27 @@ export function SignatureScreen() {
 /* ------------------------------ COMPLETED ----------------------------- */
 
 export function CompletedScreen() {
-  const { reset, navigate, draft } = useNav()
+  const { reset, navigate, draft, locale } = useNav()
   const customer = useCustomer()
   const [error, setError] = useState<string | null>(null)
   const revision = draft.report?.current_revision
   const completedAmount =
     revision?.amount_cents === null || revision?.amount_cents === undefined
-      ? "Not specified"
-      : `${(revision.amount_cents / 100).toFixed(2)} ${revision.currency}`
+      ? t(locale, "notSpecified")
+      : formatCurrency(locale, revision.amount_cents / 100, revision.currency)
+  const now = new Date()
 
   async function openPdf() {
     const assetId = draft.report?.pdf_media_asset_id
     if (!assetId) {
-      setError("The PDF is not available yet.")
+      setError(t(locale, "pdfNotAvailable"))
       return
     }
     try {
       const result = await apiFetch<{ url: string }>(`/api/v1/media/${assetId}/url`)
       window.location.assign(result.url)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not open PDF.")
+      setError(reason instanceof Error ? reason.message : t(locale, "couldNotOpenPdf"))
     }
   }
 
@@ -1496,8 +1645,8 @@ export function CompletedScreen() {
     <div className="flex flex-1 flex-col">
       <Page width="form" className="flex flex-col items-center pt-10 lg:pt-14">
         <SuccessMark />
-        <h1 className="mt-6 text-2xl font-semibold tracking-tight text-foreground">Report completed</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">Proof of this visit is saved and secured.</p>
+        <h1 className="mt-6 text-2xl font-semibold tracking-tight text-foreground">{t(locale, "reportCompletedTitle")}</h1>
+        <p className="mt-1.5 text-sm text-muted-foreground">{t(locale, "reportCompletedSubtitle")}</p>
 
         <Card className="mt-8 w-full p-4">
           <div className="flex items-center justify-between">
@@ -1505,15 +1654,15 @@ export function CompletedScreen() {
             <StatusBadge status="completed" />
           </div>
           <div className="mt-4 space-y-3 text-sm">
-            <SummaryRow label="Date & time" value="Aug 22, 2026 · 09:41 AM" />
-            <SummaryRow label="Location" value="Captured · ±5m" />
-            <SummaryRow label="Photos" value={`${draft.beforePhotoAssets.length + draft.afterPhotoAssets.length} (before & after)`} />
-            <SummaryRow label="Signature" value={draft.signed ? "Signed on-site" : "Link sent"} />
-            <SummaryRow label="Amount" value={completedAmount} strong />
+            <SummaryRow label={t(locale, "dateTimeLabel")} value={formatDateTime(locale, now.toISOString())} />
+            <SummaryRow label={t(locale, "locationLabel")} value={t(locale, "locationCapturedLabel")} />
+            <SummaryRow label={t(locale, "photosLabel")} value={tPlural(locale, "photosCount", draft.beforePhotoAssets.length + draft.afterPhotoAssets.length)} />
+            <SummaryRow label={t(locale, "signatureStatusLabel")} value={draft.signed ? t(locale, "signedOnSiteLabel") : t(locale, "linkSentLabel")} />
+            <SummaryRow label={t(locale, "amountLabel")} value={completedAmount} strong />
           </div>
           <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
             <span className="font-mono text-xs text-muted-foreground">
-              {draft.report?.human_id ?? "Report"}
+              {draft.report?.human_id ?? t(locale, "reportFallback")}
             </span>
             <SyncIndicator state="synced" />
           </div>
@@ -1524,14 +1673,14 @@ export function CompletedScreen() {
       <FlowFooter>
         <div className="space-y-2.5">
           <Button size="lg" fullWidth icon={Share2} onClick={openPdf}>
-            Open signed PDF
+            {t(locale, "openSignedPdfBtn")}
           </Button>
           <div className="flex gap-3">
             <Button variant="secondary" size="lg" fullWidth onClick={() => navigate("reportDetail", { reportId: draft.reportId })}>
-              View report
+              {t(locale, "viewReportBtn")}
             </Button>
             <Button variant="ghost" size="lg" icon={House} onClick={() => reset("home")}>
-              Done
+              {t(locale, "doneAction")}
             </Button>
           </div>
         </div>
