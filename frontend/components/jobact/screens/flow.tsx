@@ -615,6 +615,17 @@ export function NotesScreen() {
     setDraft({ notesSource: "typed", audioAssetId: undefined })
   }
 
+  function chooseTyped() {
+    recorder.current.release()
+    setRecordingState("ready")
+    setDraft({ notesSource: "typed", audioAssetId: undefined })
+  }
+
+  function chooseVoice() {
+    setNotes("")
+    setDraft({ notesSource: "voice", rawNotes: "" })
+  }
+
   async function saveNotes() {
     if (!draft.visitId || tooShort) return
     setSaving(true)
@@ -655,7 +666,30 @@ export function NotesScreen() {
           </p>
         </div>
 
-        <label className="mt-5 block">
+        <div className="mt-5">
+          <p className="mb-2 text-sm font-medium text-muted-foreground">
+            {t(locale, "chooseInputMethod")}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant={draft.notesSource === "typed" ? "primary" : "secondary"}
+              size="sm"
+              onClick={chooseTyped}
+            >
+              {t(locale, "typedNotes")}
+            </Button>
+            <Button
+              variant={draft.notesSource === "voice" ? "primary" : "secondary"}
+              size="sm"
+              icon={Mic}
+              onClick={chooseVoice}
+            >
+              {t(locale, "recordVoice")}
+            </Button>
+          </div>
+        </div>
+
+        {draft.notesSource === "typed" ? <label className="mt-5 block">
           <span className="mb-1.5 block text-sm font-medium text-muted-foreground">
             {t(locale, "workNotesLabel")}
           </span>
@@ -667,12 +701,9 @@ export function NotesScreen() {
             placeholder={t(locale, "workNotesPlaceholder")}
             className="w-full resize-none rounded-xl border border-input bg-card p-4 text-sm leading-relaxed text-foreground focus:border-ring focus:outline-none"
           />
-        </label>
-        <p className="mt-2 text-xs text-muted-foreground">
-          {tooShort ? t(locale, "tooShortHint") : t(locale, "roughNotesFine")}
-        </p>
-        <div className="mt-5 rounded-xl border border-border bg-card p-4">
+        </label> : <div className="mt-5 rounded-xl border border-border bg-card p-4">
           <p className="text-sm font-medium text-foreground">{t(locale, "voiceNotes")}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t(locale, "whatDidYouDoDesc")}</p>
           <Button
             className="mt-3"
             variant="secondary"
@@ -683,15 +714,16 @@ export function NotesScreen() {
             }}
             disabled={recordingState === "preparing" || recordingState === "uploading"}
           >
-            {recordingState === "recording"
-              ? t(locale, "stopRecording")
-              : t(locale, "startRecording")}
+            {recordingState === "recording" ? t(locale, "stopRecording") : t(locale, "startRecording")}
           </Button>
           {recordingState === "recording" && <p className="mt-2 text-xs text-muted-foreground">{t(locale, "recordingInProgress")}</p>}
           {recordingState === "preparing" && <p className="mt-2 text-xs text-muted-foreground">{t(locale, "preparingRecording")}</p>}
           {recordingState === "uploading" && <p className="mt-2 text-xs text-muted-foreground">{t(locale, "uploadingRecording")}</p>}
           {draft.audioAssetId && <p className="mt-2 text-xs text-success">{t(locale, "recordingUploaded")}</p>}
-        </div>
+        </div>}
+        {draft.notesSource === "typed" && <p className="mt-2 text-xs text-muted-foreground">
+          {tooShort ? t(locale, "tooShortHint") : t(locale, "roughNotesFine")}
+        </p>}
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>

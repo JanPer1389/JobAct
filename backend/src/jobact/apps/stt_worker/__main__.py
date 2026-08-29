@@ -67,16 +67,34 @@ async def _record_processed(event_id: UUID) -> None:
 async def _dispatch(message: Message) -> None:
     event_id = UUID(message.payload["event_id"])
     event_type = message.payload.get("event_type", "")
+    logger.info(
+        "stt_event_received event_id=%s event_type=%s stream=%s",
+        event_id,
+        event_type,
+        message.stream,
+    )
     if await _already_processed(event_id):
         await message.ack()
         return
     handler = HANDLER_REGISTRY.get(event_type)
     if handler is None:
+        logger.warning(
+            "stt_event_unhandled event_id=%s event_type=%s stream=%s",
+            event_id,
+            event_type,
+            message.stream,
+        )
         await message.ack()
         return
 
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
+            logger.info(
+                "stt_event_dispatch_started event_id=%s event_type=%s attempt=%s",
+                event_id,
+                event_type,
+                attempt,
+            )
             await handler(message.payload)
             break
         except Exception as exc:  # noqa: BLE001 - worker retry boundary
@@ -94,6 +112,12 @@ async def _dispatch(message: Message) -> None:
 
     await _record_processed(event_id)
     await message.ack()
+    logger.info(
+        "stt_event_dispatch_succeeded event_id=%s event_type=%s attempts=%s",
+        event_id,
+        event_type,
+        attempt,
+    )
 
 
 async def main() -> None:
