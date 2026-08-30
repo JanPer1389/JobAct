@@ -74,6 +74,7 @@ services:
       - ./backend/.env
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-jobact-litellm}
+      DISABLE_AIOHTTP_TRANSPORT: "true"
     volumes:
       - ./backend/litellm_config.yaml:/app/config.yaml
     command: ["--config", "/app/config.yaml", "--port", "4000"]

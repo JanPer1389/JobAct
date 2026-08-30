@@ -36,10 +36,7 @@ def test_openrouter_report_drafter_uses_supported_model() -> None:
         if model["model_name"] == "report-drafter"
     )
 
-    assert (
-        drafting_model["litellm_params"]["model"]
-        == "openrouter/openai/gpt-4.1-mini"
-    )
+    assert drafting_model["litellm_params"]["model"] == "openrouter/openai/gpt-4.1-mini"
 
 
 def test_root_compose_injects_backend_env_into_litellm() -> None:
@@ -48,3 +45,13 @@ def test_root_compose_injects_backend_env_into_litellm() -> None:
 
     assert "./backend/.env" in litellm["env_file"]
     assert "OPENROUTER_API_KEY" not in litellm.get("environment", {})
+
+
+def test_all_compose_variants_force_httpx_for_litellm() -> None:
+    for filename in ("docker-compose.yml", "docker-compose.dokploy.yml"):
+        compose = yaml.safe_load((REPOSITORY_ROOT / filename).read_text())
+
+        assert (
+            compose["services"]["litellm"]["environment"]["DISABLE_AIOHTTP_TRANSPORT"]
+            == "true"
+        )
