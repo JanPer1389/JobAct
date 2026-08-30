@@ -21,7 +21,7 @@ from typing import Literal
 
 import httpx
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
+from pydantic_ai import Agent, NativeOutput
 
 from jobact.shared.application.ports import AiConnector
 from jobact.shared.infrastructure.config import get_settings
@@ -157,7 +157,12 @@ def build_drafting_agent(
     model = connector.build_model("report-drafter", http_client=http_client)
     return Agent(
         model,
-        output_type=DraftedReport,
+        # Tool-call arguments containing a nested list-of-objects field
+        # (materials) come back from Qwen double-encoded as a JSON string
+        # instead of a real array, failing validation. Native structured
+        # output (response_format=json_schema) doesn't have that failure
+        # mode on any of our providers.
+        output_type=NativeOutput(DraftedReport),
         system_prompt=_SYSTEM_PROMPT,
         retries=2,
     )

@@ -1,6 +1,9 @@
+import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
+
+from pydantic_ai.exceptions import ModelHTTPError
 
 from jobact.workflows.report_fulfillment.activities.run_report_analysis import (
     RunReportAnalysisActivity,
@@ -39,6 +42,19 @@ def test_provider_error_or_empty_result_is_a_terminal_502_failure() -> None:
     assert failure.code == AI_PROVIDERS_UNAVAILABLE
     assert failure.http_status == 502
     assert failure.retryable is True
+
+
+def test_all_provider_client_errors_require_configuration_change() -> None:
+    failure = classify_analysis_failures(
+        [
+            ModelHTTPError(401, "claude-sonnet-4-5"),
+            ModelHTTPError(403, "openai/gpt-4.1-mini"),
+        ]
+    )
+
+    assert failure.code == "AI_PROVIDER_CONFIGURATION_ERROR"
+    assert failure.http_status == 503
+    assert failure.retryable is False
 
 
 def test_ai_failure_moves_run_to_failed_and_can_be_retried() -> None:
@@ -123,3 +139,37 @@ async def test_analysis_fails_over_to_second_provider_for_the_whole_saga() -> No
     assert audit_result is not None
     assert failure is None
     assert model == "secondary-model"
+
+
+async def test_provider_failure_log_includes_status_without_response_body(
+    caplog,
+) -> None:
+    async def draft(connector, context):
+        raise ModelHTTPError(
+            403,
+            "claude-sonnet-4-5",
+            {"error": "sensitive provider response"},
+        )
+
+    activity = RunReportAnalysisActivity(
+        uow=None,
+        connector=_Connector("anthropic"),
+        object_storage=None,
+        clock=None,
+        id_generator=None,
+        fx=SimpleNamespace(usd_rub_rate=100),
+        draft_report_fn=draft,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await activity._try_provider(
+            connector=_Connector("anthropic"),
+            report_id=uuid4(),
+            run_id=uuid4(),
+            correlation_id=uuid4(),
+            context=SimpleNamespace(raw_notes="Completed the repair."),
+            image_pairs=[],
+        )
+
+    assert "provider_http_status=403" in caplog.text
+    assert "sensitive provider response" not in caplog.text

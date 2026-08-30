@@ -52,6 +52,8 @@ import { pollReportUntilState } from "@/lib/jobact/polling"
 import { uploadVisitAudio, uploadVisitPhoto } from "@/lib/jobact/media"
 import { BrowserAudioRecorder, type RecordingState } from "@/lib/jobact/audio-recorder"
 import { analysisInputKey } from "@/lib/jobact/analysis-run"
+import { formatGpsEvidence } from "@/lib/jobact/location-evidence"
+import { analysisFailurePresentation } from "@/lib/jobact/workflow-errors"
 import {
   confidenceLabel,
   formatCurrency,
@@ -354,41 +356,34 @@ export function GpsScreen() {
     <>
       <ScreenHeader title={t(locale, "locationTitle")} onBack={back} />
       <Page width="form" className="flex flex-col">
-        <div className="relative overflow-hidden rounded-3xl border border-border" style={{ height: 260 }}>
-          {/* stylised monochrome map */}
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundColor: "oklch(0.2 0 0)",
-              backgroundImage:
-                "linear-gradient(oklch(0.26 0 0) 1px, transparent 1px), linear-gradient(90deg, oklch(0.26 0 0) 1px, transparent 1px)",
-              backgroundSize: "34px 34px",
-            }}
-          />
-          <svg className="absolute inset-0 h-full w-full" aria-hidden="true">
-            <path d="M-10 60 L120 90 L220 40 L440 120" stroke="oklch(0.32 0 0)" strokeWidth="10" fill="none" />
-            <path d="M40 -10 L90 120 L60 300" stroke="oklch(0.32 0 0)" strokeWidth="8" fill="none" />
-            <path d="M300 -10 L260 300" stroke="oklch(0.3 0 0)" strokeWidth="6" fill="none" />
-          </svg>
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-            {state === "locating" ? (
-              <span className="flex size-16 items-center justify-center">
-                <span className="absolute size-16 animate-ping rounded-full bg-foreground/20" />
-                <span className="size-4 rounded-full bg-foreground" />
-              </span>
-            ) : state === "found" ? (
-              <span className="relative flex flex-col items-center">
-                <span className="grid size-11 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg">
-                  <MapPin className="size-5" />
+        <div className="relative overflow-hidden rounded-3xl border border-border bg-muted" style={{ height: 260 }}>
+          {state === "found" && point ? (
+            <div className="grid h-full place-items-center" aria-live="polite">
+              <div className="flex flex-col items-center gap-3 px-6 text-center">
+                <span className="grid size-16 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg">
+                  <MapPin className="size-7" />
                 </span>
-                <span className="mt-1 size-2 rounded-full bg-primary/40" />
-              </span>
-            ) : (
-              <span className="grid size-11 place-items-center rounded-full bg-destructive/15 text-destructive">
-                <TriangleAlert className="size-5" />
-              </span>
-            )}
-          </div>
+                <span className="text-sm font-medium text-foreground">{t(locale, "confirmedLabel")}</span>
+                <span className="font-mono text-sm text-muted-foreground">
+                  {formatGpsEvidence(point)}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="grid h-full place-items-center" aria-live="polite">
+              {state === "locating" ? (
+                <span className="flex flex-col items-center gap-3 text-muted-foreground">
+                  <LoaderCircle className="size-8 animate-spin" />
+                  <span className="text-sm">{t(locale, "locatingLabel")}</span>
+                </span>
+              ) : (
+                <span className="flex flex-col items-center gap-3 text-destructive">
+                  <TriangleAlert className="size-8" />
+                  <span className="text-sm">{t(locale, "locationUnavailable")}</span>
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <Card className="mt-4 p-4">
@@ -411,7 +406,7 @@ export function GpsScreen() {
           <p className="mt-2 text-sm text-muted-foreground">{customer.address}</p>
           <p className="mt-1 font-mono text-xs text-muted-foreground/70">
             {state === "found" && point
-              ? `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)} · ±${Math.round(point.accuracy)}m`
+              ? formatGpsEvidence(point)
               : state === "error"
                 ? t(locale, "locationUnavailable")
                 : t(locale, "acquiringSatellites")}
@@ -763,6 +758,7 @@ export function AnalysisProcessingScreen() {
   ]
   const [active, setActive] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [canRetry, setCanRetry] = useState(true)
   const [attempt, setAttempt] = useState(0)
   const reportKey = useRef(crypto.randomUUID())
   const analysisKey = analysisInputKey({
@@ -777,6 +773,7 @@ export function AnalysisProcessingScreen() {
 
   useEffect(() => {
     const controller = new AbortController()
+    setCanRetry(true)
     const current = navigation.current
     const currentDraft = current.draft
 
@@ -858,9 +855,9 @@ export function AnalysisProcessingScreen() {
         return
       }
       if (report.workflow_state === "FAILED") {
-        throw new Error(
-          report.workflow_error?.message ?? t(locale, "analysisIncompleteError"),
-        )
+        const presentation = analysisFailurePresentation(report.workflow_error)
+        setCanRetry(presentation.retryable)
+        throw new Error(t(locale, presentation.messageKey))
       }
       current.replace("reportDraft", current.frameParams)
     }
@@ -893,15 +890,17 @@ export function AnalysisProcessingScreen() {
           >
             {t(locale, "writeManuallyBtn")}
           </Button>
-          <Button
-            onClick={() => {
-              setError(null)
-              setActive(0)
-              setAttempt((value) => value + 1)
-            }}
-          >
-            {t(locale, "tryAgainAction")}
-          </Button>
+          {canRetry && (
+            <Button
+              onClick={() => {
+                setError(null)
+                setActive(0)
+                setAttempt((value) => value + 1)
+              }}
+            >
+              {t(locale, "tryAgainAction")}
+            </Button>
+          )}
         </div>
         <Button variant="secondary" size="md" className="mt-6" onClick={() => reset("home")}>
           {t(locale, "returnToWorkspace")}

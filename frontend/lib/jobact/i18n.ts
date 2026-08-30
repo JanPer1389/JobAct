@@ -284,6 +284,9 @@ const translations = {
     visitNotesMissing: "Visit notes are missing.",
     photosMustFormPairs: "Before and after photos must form equal pairs.",
     analysisIncompleteError: "The AI analysis could not be completed. Please try again.",
+    analysisTimedOutError: "The AI analysis timed out. Please try again.",
+    analysisProviderConfigurationError:
+      "The AI service is not configured correctly. Enter the report manually or contact an administrator.",
     couldNotAnalyseVisit: "Could not analyse this visit.",
     analysisTakingLongerError:
       "The analysis is taking longer than expected. It is still running — check again in a moment.",
@@ -705,6 +708,9 @@ const translations = {
     visitNotesMissing: "Отсутствуют заметки о визите.",
     photosMustFormPairs: "Фото до и после должны образовывать равные пары.",
     analysisIncompleteError: "Не удалось завершить анализ ИИ. Попробуйте снова.",
+    analysisTimedOutError: "Время ожидания анализа ИИ истекло. Попробуйте снова.",
+    analysisProviderConfigurationError:
+      "Сервис ИИ настроен некорректно. Введите отчёт вручную или обратитесь к администратору.",
     couldNotAnalyseVisit: "Не удалось проанализировать визит.",
     analysisTakingLongerError:
       "Анализ занимает больше времени, чем ожидалось. Он всё ещё выполняется — проверьте через минуту.",

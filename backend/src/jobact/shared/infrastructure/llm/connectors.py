@@ -19,6 +19,34 @@ _OPENROUTER_MODELS = {
     "report-drafter": "report-drafter",
     "visual-auditor": "visual-auditor",
 }
+_QWEN_MODELS = {
+    "report-drafter": "qwen3.8-flash",
+    "visual-auditor": "qwen3-vl-flash",
+}
+
+
+class QwenConnector:
+    def __init__(self, api_key: str, base_url: str) -> None:
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+
+    @property
+    def provider_name(self) -> str:
+        return "qwen"
+
+    def model_name(self, alias: str) -> str:
+        return _model_name(_QWEN_MODELS, alias)
+
+    def build_model(self, alias: str, http_client: Any | None = None) -> OpenAIChatModel:
+        return OpenAIChatModel(
+            self.model_name(alias),
+            provider=OpenAIProvider(
+                base_url=self._base_url,
+                api_key=self._api_key,
+                http_client=http_client,
+            ),
+            settings={"extra_body": {"enable_thinking": False}},
+        )
 
 
 class AnthropicConnector:
@@ -66,22 +94,21 @@ class OpenRouterConnector:
 
 def build_ai_connector(settings: Settings) -> AiConnector:
     selected = select_ai_connector(
+        qwen_api_key=settings.dashscope_api_key,
         anthropic_api_key=settings.anthropic_api_key,
         openrouter_api_key=settings.openrouter_api_key,
     )
+    if selected == AiConnectorKind.QWEN:
+        return QwenConnector(settings.dashscope_api_key, settings.qwen_base_url)
     if selected == AiConnectorKind.ANTHROPIC:
         return AnthropicConnector(settings.anthropic_api_key)
     return OpenRouterConnector(settings)
 
 
 def build_ai_connectors(settings: Settings) -> list[AiConnector]:
-    """All configured providers in deterministic failover order."""
-    connectors: list[AiConnector] = []
-    if settings.anthropic_api_key.strip():
-        connectors.append(AnthropicConnector(settings.anthropic_api_key))
-    if settings.openrouter_api_key.strip():
-        connectors.append(OpenRouterConnector(settings))
-    return connectors
+    """The single selected provider -- Qwen is the only supported connector,
+    with no failover to Anthropic or OpenRouter."""
+    return [build_ai_connector(settings)]
 
 
 def _model_name(models: dict[str, str], alias: str) -> str:
