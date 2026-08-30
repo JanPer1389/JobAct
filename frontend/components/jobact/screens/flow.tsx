@@ -53,6 +53,7 @@ import { uploadVisitAudio, uploadVisitPhoto } from "@/lib/jobact/media"
 import { BrowserAudioRecorder, type RecordingState } from "@/lib/jobact/audio-recorder"
 import { analysisInputKey } from "@/lib/jobact/analysis-run"
 import { formatGpsEvidence } from "@/lib/jobact/location-evidence"
+import { analysisFailurePresentation } from "@/lib/jobact/workflow-errors"
 import {
   confidenceLabel,
   formatCurrency,
@@ -757,6 +758,7 @@ export function AnalysisProcessingScreen() {
   ]
   const [active, setActive] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [canRetry, setCanRetry] = useState(true)
   const [attempt, setAttempt] = useState(0)
   const reportKey = useRef(crypto.randomUUID())
   const analysisKey = analysisInputKey({
@@ -771,6 +773,7 @@ export function AnalysisProcessingScreen() {
 
   useEffect(() => {
     const controller = new AbortController()
+    setCanRetry(true)
     const current = navigation.current
     const currentDraft = current.draft
 
@@ -852,9 +855,9 @@ export function AnalysisProcessingScreen() {
         return
       }
       if (report.workflow_state === "FAILED") {
-        throw new Error(
-          report.workflow_error?.message ?? t(locale, "analysisIncompleteError"),
-        )
+        const presentation = analysisFailurePresentation(report.workflow_error)
+        setCanRetry(presentation.retryable)
+        throw new Error(t(locale, presentation.messageKey))
       }
       current.replace("reportDraft", current.frameParams)
     }
@@ -887,15 +890,17 @@ export function AnalysisProcessingScreen() {
           >
             {t(locale, "writeManuallyBtn")}
           </Button>
-          <Button
-            onClick={() => {
-              setError(null)
-              setActive(0)
-              setAttempt((value) => value + 1)
-            }}
-          >
-            {t(locale, "tryAgainAction")}
-          </Button>
+          {canRetry && (
+            <Button
+              onClick={() => {
+                setError(null)
+                setActive(0)
+                setAttempt((value) => value + 1)
+              }}
+            >
+              {t(locale, "tryAgainAction")}
+            </Button>
+          )}
         </div>
         <Button variant="secondary" size="md" className="mt-6" onClick={() => reset("home")}>
           {t(locale, "returnToWorkspace")}
