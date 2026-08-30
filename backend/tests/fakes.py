@@ -4,8 +4,8 @@
 One small, focused fake per Protocol -- shared test infrastructure meant
 to be imported by test suites across `tests/` (not just `tests/application`),
 so application-layer code (and, from Phase 1 onward, real handlers) can be
-tested without ever touching Postgres, Redis, S3/MinIO, Google OIDC,
-ReportLab, or LiteLLM.
+tested without ever touching Postgres, Redis, S3/MinIO, Google OIDC, or
+ReportLab.
 
 Each fake satisfies its Protocol structurally -- no explicit subclassing
 needed, that's the point of `typing.Protocol` -- and additionally carries
@@ -17,7 +17,6 @@ import hashlib
 import hmac
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID, uuid4
 
 from jobact.shared.application.ports import (
@@ -174,46 +173,6 @@ class FakePdfRenderer:
     async def render(self, context: dict) -> bytes:
         self.rendered_contexts.append(context)
         return b"%PDF-1.4 fake pdf content"
-
-
-class FakeLlmGateway:
-    """In-memory LLM gateway. Fixed/settable credentials plus a settable
-    alias -> model-name mapping, so tests never need LiteLLM's config file.
-    """
-
-    def __init__(
-        self,
-        base_url: str = "https://fake-llm.test",
-        api_key: str = "fake-api-key",
-        model_names: dict[str, str] | None = None,
-        drafting_result: Any | None = None,
-        drafting_error: Exception | None = None,
-    ) -> None:
-        self._base_url = base_url
-        self._api_key = api_key
-        self._model_names = dict(model_names) if model_names else {}
-        self._drafting_result = drafting_result
-        self._drafting_error = drafting_error
-        self.draft_inputs: list[str] = []
-
-    @property
-    def base_url(self) -> str:
-        return self._base_url
-
-    @property
-    def api_key(self) -> str:
-        return self._api_key
-
-    def model_name(self, alias: str) -> str:
-        return self._model_names.get(alias, alias)
-
-    async def draft(self, raw_notes: str) -> Any:
-        self.draft_inputs.append(raw_notes)
-        if self._drafting_error is not None:
-            raise self._drafting_error
-        if self._drafting_result is None:
-            raise ValueError("No fake drafting result configured.")
-        return self._drafting_result
 
 
 class FakeClock:

@@ -20,9 +20,7 @@ dependencies = [
     "authlib",
     "httpx",
     "reportlab",
-    "litellm",
     "pydantic-ai",
-    "anthropic<1",
     "argon2-cffi",
     "email-validator",
 ]

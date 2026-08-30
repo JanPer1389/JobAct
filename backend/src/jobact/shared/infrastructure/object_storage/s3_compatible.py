@@ -70,10 +70,14 @@ class S3CompatibleObjectStorage:
                 )
             except client.exceptions.ClientError:
                 return None
+            metadata = {
+                key.lower(): value
+                for key, value in response.get("Metadata", {}).items()
+            }
             return ObjectMetadata(
                 content_type=response.get("ContentType", ""),
                 byte_size=response["ContentLength"],
-                sha256=response.get("Metadata", {}).get("sha256", ""),
+                sha256=metadata.get("sha256", ""),
             )
 
     async def download(self, key: str) -> bytes:

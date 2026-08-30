@@ -27,8 +27,6 @@ today.
   unregistered because nothing produces it yet.
 - The opt-in live-model smoke test (`JOBACT_LIVE_LLM_TESTS=1`, gated off in CI) that Milestone
   1's plan called for but that was not written this session — see [`ai.md`](architecture/ai.md).
-- Deciding whether to also wire the registered-but-unused `report-drafter-fallback` LiteLLM
-  alias into an actual fallback path, or drop it if it stays unneeded.
 
 ## Milestone 4 — Delivery, analytics, attribution
 

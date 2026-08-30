@@ -12,12 +12,15 @@ from pydantic import BaseModel, Field
 
 
 class FairPriceRangeUsd(BaseModel):
-    min: float | None = None
-    max: float | None = None
+    # Bounded, not just typed -- an unbounded `number` schema field triggers
+    # a Qwen constrained-decoding bug where it emits a runaway, absurdly
+    # long decimal literal instead of a normal value, corrupting the JSON.
+    min: float | None = Field(default=None, ge=0, le=1_000_000)
+    max: float | None = Field(default=None, ge=0, le=1_000_000)
 
 
 class PriceAssessment(BaseModel):
-    provided_price_usd: float | None = None
+    provided_price_usd: float | None = Field(default=None, ge=0, le=1_000_000)
     fair_price_range_usd: FairPriceRangeUsd
     price_verdict: Literal["not_provided", "reasonable", "overpriced", "significantly_overpriced", "suspiciously_low", "cannot_assess"]
     price_explanation: str

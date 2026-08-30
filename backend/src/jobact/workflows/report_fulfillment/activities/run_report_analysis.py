@@ -66,6 +66,7 @@ from jobact.workflows.report_fulfillment.agent import (
 from jobact.workflows.report_fulfillment.failures import (
     WorkflowFailure,
     classify_analysis_failures,
+    provider_http_status,
 )
 from jobact.workflows.report_fulfillment.repository import (
     WorkflowConcurrencyError,
@@ -110,8 +111,10 @@ class RunReportAnalysisActivity:
         connectors: Sequence[AiConnector] | None = None,
     ) -> None:
         self._uow = uow
-        self._connectors = tuple(connectors) if connectors is not None else (
-            (connector,) if connector is not None else ()
+        self._connectors = (
+            tuple(connectors)
+            if connectors is not None
+            else ((connector,) if connector is not None else ())
         )
         self._object_storage = object_storage
         self._clock = clock
@@ -192,7 +195,9 @@ class RunReportAnalysisActivity:
                 await run_repo.save(run, expected_version=claimed_version)
             except WorkflowConcurrencyError:
                 logger.info(
-                    "report_analysis_claim_lost report_id=%s run_id=%s", report_id, run_id
+                    "report_analysis_claim_lost report_id=%s run_id=%s",
+                    report_id,
+                    run_id,
                 )
                 return None
 
@@ -242,7 +247,8 @@ class RunReportAnalysisActivity:
                 gps_lon=visit.gps_lon,
                 current_work_completed=revision.work_completed or None,
                 current_materials=[
-                    DraftedMaterial(label=m.label, qty=m.qty) for m in revision.materials
+                    DraftedMaterial(label=m.label, qty=m.qty)
+                    for m in revision.materials
                 ],
                 current_amount_cents=revision.amount_cents,
                 currency=revision.currency,
@@ -264,7 +270,9 @@ class RunReportAnalysisActivity:
                                 before_asset.storage_key
                             ),
                             before_asset.content_type,
-                            await self._object_storage.download(after_asset.storage_key),
+                            await self._object_storage.download(
+                                after_asset.storage_key
+                            ),
                             after_asset.content_type,
                         )
                     )
@@ -336,10 +344,11 @@ class RunReportAnalysisActivity:
             # the template draft; provider details must not propagate.
             logger.warning(
                 "report_ai_request_failed report_id=%s run_id=%s step=drafting "
-                "error_type=%s correlation_id=%s",
+                "error_type=%s provider_http_status=%s correlation_id=%s",
                 report_id,
                 run_id,
                 type(exc).__name__,
+                provider_http_status(exc),
                 correlation_id,
             )
             return exc
@@ -389,10 +398,12 @@ class RunReportAnalysisActivity:
             # comparison invalidates the whole unified result.
             logger.warning(
                 "report_ai_request_failed report_id=%s run_id=%s "
-                "step=visual_comparison error_type=%s correlation_id=%s",
+                "step=visual_comparison error_type=%s provider_http_status=%s "
+                "correlation_id=%s",
                 report_id,
                 run_id,
                 type(exc).__name__,
+                provider_http_status(exc),
                 correlation_id,
             )
             return exc

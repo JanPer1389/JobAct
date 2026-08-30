@@ -1,11 +1,11 @@
 """Integration tests for the local Docker Compose infrastructure stack.
 
-These tests exercise the *real* Postgres, Redis, MinIO, and LiteLLM
-services started via `docker compose up -d` (run from `backend/`) -- they
-are deliberately not mocked. This is an infrastructure-existence test: it
-verifies the stack is reachable and configured correctly, using the same
-`Settings` the application itself will use, rather than a second set of
-hardcoded credentials.
+These tests exercise the *real* Postgres, Redis, and MinIO services started
+via `docker compose up -d` (run from `backend/`) -- they are deliberately
+not mocked. This is an infrastructure-existence test: it verifies the stack
+is reachable and configured correctly, using the same `Settings` the
+application itself will use, rather than a second set of hardcoded
+credentials.
 
 Run with:
     docker compose up -d
@@ -14,7 +14,6 @@ Run with:
 
 import aioboto3
 import asyncpg
-import httpx
 import pytest
 import redis.asyncio as redis
 
@@ -64,11 +63,3 @@ async def test_minio_bucket_exists() -> None:
     ) as s3:
         # head_bucket raises a ClientError if the bucket does not exist.
         await s3.head_bucket(Bucket=settings.minio_bucket_name)
-
-
-@pytest.mark.asyncio
-async def test_litellm_liveliness() -> None:
-    settings = get_settings()
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{settings.litellm_base_url}/health/liveliness")
-    assert response.status_code == 200

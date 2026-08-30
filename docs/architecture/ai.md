@@ -3,26 +3,17 @@
 ## Provider path
 
 ```text
-jobact API/worker → LiteLLM proxy (http://litellm:4000, internal LITELLM_MASTER_KEY)
-                  → OpenRouter (OPENROUTER_API_KEY, container-only)
-                  → openrouter/anthropic/claude-sonnet-4.5  (alias: report-drafter)
-                    openrouter/openai/gpt-4.1-mini           (alias: report-drafter-fallback)
+jobact API/worker → Qwen / DashScope directly (QWEN_BASE_URL, DASHSCOPE_API_KEY)
+                  → qwen3.8-flash    (alias: report-drafter)
+                    qwen3-vl-flash   (alias: visual-auditor)
 ```
 
-The application code never sees an OpenRouter key — `LlmGateway` (`shared/application/
-ports.py`, implemented by `shared/infrastructure/llm/litellm_gateway.py`) only carries
-LiteLLM's base URL and master key, both read from `Settings`
-(`shared/infrastructure/config.py`). The only place `OPENROUTER_API_KEY` is consumed is the
-`litellm` service in `docker-compose.yml`, via `backend/litellm_config.yaml`. Rotating or
-swapping the provider is an edit to `.env` and `litellm_config.yaml`, not a code change — see
-[ADR-0006](../adr/0006-litellm-over-openrouter.md).
-
-The `report-drafter-fallback` alias is registered in `litellm_config.yaml` but nothing in
-`workflows/report_fulfillment/agent.py` currently selects it on failure — the only fallback
-this milestone implements is the deterministic template below, not an automatic
-model-to-model fallback. Wiring LiteLLM's own fallback behavior (or picking the fallback
-alias explicitly on a `report-drafter` failure) is open work, not a bug — it just wasn't
-needed to prove the vertical slice.
+Qwen is the only supported AI connector (see [ADR-0006](../adr/0006-litellm-over-openrouter.md),
+now superseded). `QwenConnector` (`shared/infrastructure/llm/connectors.py`) builds a
+PydanticAI `OpenAIChatModel` directly against DashScope's OpenAI-compatible endpoint, using
+`Settings.dashscope_api_key`/`qwen_base_url`. There is no proxy in front of it and no other
+provider to fail over to — `build_ai_connector()` raises `NoAiConnectorConfigured` if
+`DASHSCOPE_API_KEY` is unset, rather than silently falling back to a different model.
 
 ## Where `raw_notes` comes from
 
@@ -38,9 +29,9 @@ Both converge on the same field, so a future `TranscribeAudioActivity` only need
 
 ## The agent
 
-`workflows/report_fulfillment/agent.py` builds a PydanticAI `Agent` bound to LiteLLM's
-OpenAI-compatible endpoint (`OpenAIChatModel` + `OpenAIProvider`, base URL normalized to end
-in `/v1`), with a strict Pydantic output type:
+`workflows/report_fulfillment/agent.py` builds a PydanticAI `Agent` bound directly to Qwen's
+OpenAI-compatible endpoint (`OpenAIChatModel` + `OpenAIProvider`), with a strict Pydantic
+output type:
 
 ```python
 class DraftedMaterial(BaseModel):
@@ -94,11 +85,11 @@ draft).
 
 ## Cost and observability
 
-LiteLLM keeps its own spend log server-side. In addition, `LiteLlmCostCapture` reads the
-`x-litellm-model-name` / `x-litellm-response-cost` response headers on every drafting call and
-`GenerateReportDraftActivity` writes `{model, prompt_tokens, completion_tokens, cost_usd,
-latency_ms}` into that step's `workflow.workflow_steps.output` JSONB column — no separate
-cost-tracking table exists or is needed for "what does a report cost."
+There is no proxy in front of Qwen, so there is no server-side spend log to read from — Qwen's
+OpenAI-compatible endpoint doesn't return a per-response cost. `cost_usd` is always `None` in
+the `{model, prompt_tokens, completion_tokens, cost_usd, latency_ms}` written into that step's
+`workflow.workflow_steps.output` JSONB column; token counts (from the response's own `usage`)
+are the only real per-call cost signal available today.
 
 ## Testing
 
@@ -112,5 +103,5 @@ directly, and `tests/domain/reports/test_pricing.py` covers the units→cents co
 The plan called for a real, opt-in smoke test against the live model
 (`tests/integration/test_live_llm.py`, gated on `JOBACT_LIVE_LLM_TESTS=1`) — **this file does
 not exist yet.** No test in this milestone calls a live model; CI safety therefore isn't at
-risk, but "does the real OpenRouter round trip actually work" has only been verified manually
-(see `docs/roadmap.md`), not by an automated, opt-in test. Adding it is open work.
+risk, but "does the real Qwen round trip actually work" has only been verified manually, not
+by an automated, opt-in test. Adding it is open work.

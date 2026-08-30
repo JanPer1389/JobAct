@@ -5,12 +5,11 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
-from pydantic_ai import Agent, BinaryContent
+from pydantic_ai import Agent, BinaryContent, NativeOutput
 
 from jobact.contracts.http.v1.visual_audits import VisualAuditResult
 from jobact.shared.application.ports import AiConnector
 from jobact.shared.infrastructure.config import get_settings
-from jobact.workflows.report_fulfillment.agent import LiteLlmCostCapture
 
 _SYSTEM_PROMPT = """You are an independent visual auditor for completed field-service jobs.
 
@@ -56,6 +55,22 @@ class AuditAgentResult:
     model: str
 
 
+def build_visual_audit_agent(
+    connector: AiConnector, http_client: httpx.AsyncClient | None = None
+) -> Agent[None, VisualAuditResult]:
+    return Agent(
+        connector.build_model("visual-auditor", http_client=http_client),
+        # VisualAuditResult's nested objects (comparison, quality_assessment,
+        # price_assessment) come back from Qwen's tool-call arguments
+        # double-encoded as JSON strings rather than real objects, failing
+        # validation. Native structured output (response_format=json_schema)
+        # doesn't have that failure mode on any of our providers.
+        output_type=NativeOutput(VisualAuditResult),
+        system_prompt=_SYSTEM_PROMPT,
+        retries=2,
+    )
+
+
 async def run_visual_audit(
     connector: AiConnector,
     *,
@@ -68,20 +83,13 @@ async def run_visual_audit(
     response_language: str = "English",
 ) -> AuditAgentResult:
     settings = get_settings()
-    cost_capture = LiteLlmCostCapture()
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(
             settings.ai_request_timeout_seconds,
             connect=settings.ai_connect_timeout_seconds,
         ),
-        event_hooks={"response": [cost_capture.capture]},
     ) as client:
-        agent: Agent[None, VisualAuditResult] = Agent(
-            connector.build_model("visual-auditor", http_client=client),
-            output_type=VisualAuditResult,
-            system_prompt=_SYSTEM_PROMPT,
-            retries=2,
-        )
+        agent = build_visual_audit_agent(connector, http_client=client)
         header = [
             f"Work description: {work_description}",
             f"Stated price in USD: {provided_price_usd if provided_price_usd is not None else 'not provided'}",
@@ -103,6 +111,6 @@ async def run_visual_audit(
         result=response.output,
         prompt_tokens=usage.input_tokens,
         completion_tokens=usage.output_tokens,
-        cost_usd=Decimal(str(cost_capture.cost_usd)) if cost_capture.cost_usd is not None else None,
-        model=cost_capture.model_name or connector.model_name("visual-auditor"),
+        cost_usd=None,
+        model=connector.model_name("visual-auditor"),
     )

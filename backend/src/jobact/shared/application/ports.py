@@ -1,10 +1,10 @@
 """Protocols describing the application layer's boundary to every external
 system this backend talks to: object storage, message broker, identity
-provider, PDF rendering, and LLM gateway -- plus the two "environment"
+provider, PDF rendering, and the AI connector -- plus the two "environment"
 seams, a clock and an id generator.
 
 Pure application-layer code, same purity rule as `uow.py`: ZERO
-SQLAlchemy/Redis/boto3/aioboto3/Authlib/ReportLab/LiteLLM/PydanticAI/
+SQLAlchemy/Redis/boto3/aioboto3/Authlib/ReportLab/PydanticAI/
 FastAPI imports are allowed in this module. Each Protocol here is
 structural typing (`typing.Protocol`), not an ABC, and gets exactly one
 real implementation in a later infrastructure task, plus an in-memory fake
@@ -176,30 +176,6 @@ class PdfRenderer(Protocol):
     """
 
     async def render(self, context: dict) -> bytes: ...
-
-
-@runtime_checkable
-class LlmGateway(Protocol):
-    """A thin credentials/config provider for PydanticAI's model classes,
-    NOT a call-shaped `complete()`-style API.
-
-    PydanticAI's own `Agent`/`Model` classes own the actual HTTP request
-    lifecycle and structured-output handling (Task 4.4), bound to
-    LiteLLM's OpenAI-compatible endpoint -- a generic `complete()` wrapper
-    here would be redundant and wouldn't match how PydanticAI actually
-    calls out. This port exists only so Task 4.4's `LiteLlmGateway` can
-    hand PydanticAI's model constructor a `base_url`/`api_key`, and so
-    `LlmGateway`-typed code is fakeable without hitting LiteLLM's config
-    file.
-    """
-
-    @property
-    def base_url(self) -> str: ...
-
-    @property
-    def api_key(self) -> str: ...
-
-    def model_name(self, alias: str) -> str: ...
 
 
 @runtime_checkable

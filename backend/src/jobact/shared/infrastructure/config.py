@@ -57,11 +57,11 @@ class Settings(BaseSettings):
     minio_secret_key: str = "jobact-secret"
     minio_bucket_name: str = "jobact-reports"
 
-    # --- LiteLLM proxy ------------------------------------------------
-    litellm_base_url: str = "http://localhost:4000"
-    litellm_master_key: str = "sk-jobact-litellm"
-    openrouter_api_key: str = ""
-    anthropic_api_key: str = ""
+    # --- Qwen / DashScope (the only AI connector) ----------------------
+    dashscope_api_key: str = ""
+    qwen_base_url: str = (
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    )
 
     # --- External call timeouts ---------------------------------------
     # Every outbound AI/storage call is bounded so a hung provider parks

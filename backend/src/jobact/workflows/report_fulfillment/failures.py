@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import httpx
 
 AI_ANALYSIS_TIMEOUT = "AI_ANALYSIS_TIMEOUT"
+AI_PROVIDER_CONFIGURATION_ERROR = "AI_PROVIDER_CONFIGURATION_ERROR"
 AI_PROVIDERS_UNAVAILABLE = "AI_PROVIDERS_UNAVAILABLE"
 AUDIO_INVALID = "AUDIO_INVALID"
 AUDIO_TOO_LARGE = "AUDIO_TOO_LARGE"
@@ -29,6 +30,18 @@ def classify_analysis_failures(errors: list[Exception]) -> WorkflowFailure:
             message="The AI analysis timed out. Please try again.",
             retryable=True,
         )
+    if errors and all(
+        provider_http_status(error) in {400, 401, 403, 404} for error in errors
+    ):
+        return WorkflowFailure(
+            code=AI_PROVIDER_CONFIGURATION_ERROR,
+            http_status=503,
+            message=(
+                "The AI service is not configured correctly. Enter the report "
+                "manually or contact an administrator."
+            ),
+            retryable=False,
+        )
     return WorkflowFailure(
         code=AI_PROVIDERS_UNAVAILABLE,
         http_status=502,
@@ -42,6 +55,16 @@ def failure_from_code(code: str | None) -> WorkflowFailure | None:
         return classify_analysis_failures([TimeoutError()])
     if code == AI_PROVIDERS_UNAVAILABLE:
         return classify_analysis_failures([RuntimeError()])
+    if code == AI_PROVIDER_CONFIGURATION_ERROR:
+        return WorkflowFailure(
+            code=AI_PROVIDER_CONFIGURATION_ERROR,
+            http_status=503,
+            message=(
+                "The AI service is not configured correctly. Enter the report "
+                "manually or contact an administrator."
+            ),
+            retryable=False,
+        )
     transcription_failures = {
         AUDIO_INVALID: WorkflowFailure(
             code=AUDIO_INVALID,
@@ -81,3 +104,12 @@ def failure_from_code(code: str | None) -> WorkflowFailure | None:
 
 def _is_timeout(error: Exception) -> bool:
     return isinstance(error, (TimeoutError, httpx.TimeoutException))
+
+
+def provider_http_status(error: Exception) -> int | None:
+    status_code = getattr(error, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+    if isinstance(error, httpx.HTTPStatusError):
+        return error.response.status_code
+    return None
