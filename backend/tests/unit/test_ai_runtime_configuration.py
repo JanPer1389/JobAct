@@ -28,6 +28,20 @@ def test_openrouter_visual_auditor_uses_qwen_vision_model() -> None:
     )
 
 
+def test_openrouter_report_drafter_uses_supported_model() -> None:
+    config = yaml.safe_load((BACKEND_ROOT / "litellm_config.yaml").read_text())
+    drafting_model = next(
+        model
+        for model in config["model_list"]
+        if model["model_name"] == "report-drafter"
+    )
+
+    assert (
+        drafting_model["litellm_params"]["model"]
+        == "openrouter/openai/gpt-4.1-mini"
+    )
+
+
 def test_root_compose_injects_backend_env_into_litellm() -> None:
     compose = yaml.safe_load((REPOSITORY_ROOT / "docker-compose.yml").read_text())
     litellm = compose["services"]["litellm"]
