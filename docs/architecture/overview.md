@@ -28,7 +28,7 @@ contexts/<name>/application    command handlers, UnitOfWork boundary
 contexts/<name>/domain         aggregates, invariants, domain events (pure Python)
     │
     ▼ (implements ports declared in shared/application/ports.py)
-shared/infrastructure/         Postgres, Redis, MinIO/S3, Google OIDC, ReportLab, LiteLLM
+shared/infrastructure/         Postgres, Redis, MinIO/S3, Google OIDC, ReportLab, Qwen
 ```
 
 ## Bounded contexts
@@ -68,7 +68,7 @@ the same key and body returns the stored response instead of re-executing the ha
 ## What is real vs. simulated in this milestone
 
 Real: Google OIDC sign-in and cookie sessions, customers, visit records, the full report
-state machine, AI drafting via LiteLLM/OpenRouter, the durable workflow, signature capture
+state machine, AI drafting via Qwen, the durable workflow, signature capture
 and upload, PDF generation and storage, idempotency, the outbox/broker/worker path.
 
 Deliberately still simulated (frontend-only, no backend integration): camera/photo capture

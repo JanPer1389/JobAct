@@ -10,7 +10,6 @@ from pydantic_ai import Agent, BinaryContent, NativeOutput
 from jobact.contracts.http.v1.visual_audits import VisualAuditResult
 from jobact.shared.application.ports import AiConnector
 from jobact.shared.infrastructure.config import get_settings
-from jobact.workflows.report_fulfillment.agent import LiteLlmCostCapture
 
 _SYSTEM_PROMPT = """You are an independent visual auditor for completed field-service jobs.
 
@@ -84,13 +83,11 @@ async def run_visual_audit(
     response_language: str = "English",
 ) -> AuditAgentResult:
     settings = get_settings()
-    cost_capture = LiteLlmCostCapture()
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(
             settings.ai_request_timeout_seconds,
             connect=settings.ai_connect_timeout_seconds,
         ),
-        event_hooks={"response": [cost_capture.capture]},
     ) as client:
         agent = build_visual_audit_agent(connector, http_client=client)
         header = [
@@ -114,6 +111,6 @@ async def run_visual_audit(
         result=response.output,
         prompt_tokens=usage.input_tokens,
         completion_tokens=usage.output_tokens,
-        cost_usd=Decimal(str(cost_capture.cost_usd)) if cost_capture.cost_usd is not None else None,
-        model=cost_capture.model_name or connector.model_name("visual-auditor"),
+        cost_usd=None,
+        model=connector.model_name("visual-auditor"),
     )

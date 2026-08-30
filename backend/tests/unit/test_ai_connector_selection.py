@@ -6,48 +6,13 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 
-from jobact.shared.application.ai_connectors import (
-    AiConnectorKind,
-    NoAiConnectorConfigured,
-    select_ai_connector,
-)
+from jobact.shared.application.ai_connectors import NoAiConnectorConfigured
 from jobact.shared.infrastructure.config import Settings
 from jobact.shared.infrastructure.llm.connectors import (
-    AnthropicConnector,
     QwenConnector,
+    build_ai_connector,
     build_ai_connectors,
 )
-
-
-@pytest.mark.asyncio
-async def test_anthropic_connector_accepts_the_managed_httpx_client() -> None:
-    """A dependency update must not make provider construction reject our client."""
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(503, request=request))) as client:
-        model = AnthropicConnector("test-key").build_model(
-            "report-drafter", http_client=client
-        )
-
-    assert model.model_name == "claude-sonnet-4-5"
-
-
-@pytest.mark.asyncio
-async def test_anthropic_request_uses_injected_client_and_surfaces_provider_failure() -> None:
-    request_count = 0
-
-    def reject(request: httpx.Request) -> httpx.Response:
-        nonlocal request_count
-        request_count += 1
-        return httpx.Response(401, json={"error": {"message": "rejected"}}, request=request)
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(reject)) as client:
-        model = AnthropicConnector("test-key").build_model(
-            "report-drafter", http_client=client
-        )
-        with pytest.raises(ModelHTTPError) as raised:
-            await Agent(model).run("Use this non-sensitive test fixture.")
-
-    assert raised.value.status_code == 401
-    assert request_count == 1
 
 
 class _StructuredFixture(BaseModel):
@@ -81,31 +46,9 @@ async def test_qwen_disables_thinking_for_required_structured_output() -> None:
     assert captured_body["enable_thinking"] is False
 
 
-def test_qwen_wins_when_all_keys_are_present() -> None:
-    assert (
-        select_ai_connector(
-            qwen_api_key="sk-qwen",
-            anthropic_api_key="sk-ant",
-            openrouter_api_key="sk-or",
-        )
-        == AiConnectorKind.QWEN
-    )
-
-
-def test_openrouter_is_used_when_it_is_the_only_key() -> None:
-    assert (
-        select_ai_connector(
-            qwen_api_key="", anthropic_api_key="", openrouter_api_key="sk-or"
-        )
-        == AiConnectorKind.OPENROUTER
-    )
-
-
 def test_no_key_means_no_configured_connector() -> None:
     with pytest.raises(NoAiConnectorConfigured):
-        select_ai_connector(
-            qwen_api_key="", anthropic_api_key=" ", openrouter_api_key=""
-        )
+        build_ai_connector(Settings(dashscope_api_key=" "))
 
 
 def test_qwen_connector_uses_direct_model_studio_models() -> None:
@@ -125,16 +68,9 @@ def test_qwen_connector_uses_direct_model_studio_models() -> None:
     assert visual_model.model_name == "qwen3-vl-flash"
 
 
-def test_build_ai_connectors_never_falls_back_past_qwen() -> None:
-    """Qwen is the only supported connector: even with Anthropic and
-    OpenRouter keys configured, neither is used as a runtime failover."""
-    connectors = build_ai_connectors(
-        Settings(
-            dashscope_api_key="sk-qwen",
-            anthropic_api_key="sk-ant",
-            openrouter_api_key="sk-or",
-            litellm_master_key="sk-or",
-        )
-    )
+def test_build_ai_connectors_returns_only_qwen() -> None:
+    """Qwen is the only supported connector -- there is no other provider to
+    fail over to."""
+    connectors = build_ai_connectors(Settings(dashscope_api_key="sk-qwen"))
 
     assert [connector.provider_name for connector in connectors] == ["qwen"]

@@ -15,7 +15,6 @@ from jobact.shared.application.ports import (
     ExternalIdentity,
     IdentityProvider,
     IdGenerator,
-    LlmGateway,
     MessageBroker,
     ObjectStorage,
     PasswordHasher,
@@ -25,7 +24,6 @@ from tests.fakes import (
     FakeClock,
     FakeIdentityProvider,
     FakeIdGenerator,
-    FakeLlmGateway,
     FakeMessageBroker,
     FakeObjectStorage,
     FakePasswordHasher,
@@ -53,10 +51,6 @@ def test_fake_password_hasher_satisfies_protocol() -> None:
 
 def test_fake_pdf_renderer_satisfies_protocol() -> None:
     assert isinstance(FakePdfRenderer(), PdfRenderer)
-
-
-def test_fake_llm_gateway_satisfies_protocol() -> None:
-    assert isinstance(FakeLlmGateway(), LlmGateway)
 
 
 def test_fake_clock_satisfies_protocol() -> None:
@@ -133,15 +127,6 @@ async def test_fake_pdf_renderer_records_context_and_returns_bytes() -> None:
     assert isinstance(pdf, bytes)
     assert len(pdf) > 0
     assert renderer.rendered_contexts == [{"title": "Report"}]
-
-
-def test_fake_llm_gateway_maps_alias_to_configured_model_name() -> None:
-    gateway = FakeLlmGateway(model_names={"report-drafter": "gpt-4o-mini"})
-
-    assert gateway.base_url
-    assert gateway.api_key
-    assert gateway.model_name("report-drafter") == "gpt-4o-mini"
-    assert gateway.model_name("unmapped-alias") == "unmapped-alias"
 
 
 def test_fake_clock_is_settable_and_stays_timezone_aware() -> None:

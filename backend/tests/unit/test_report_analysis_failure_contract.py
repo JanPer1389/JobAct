@@ -47,8 +47,8 @@ def test_provider_error_or_empty_result_is_a_terminal_502_failure() -> None:
 def test_all_provider_client_errors_require_configuration_change() -> None:
     failure = classify_analysis_failures(
         [
-            ModelHTTPError(401, "claude-sonnet-4-5"),
-            ModelHTTPError(403, "openai/gpt-4.1-mini"),
+            ModelHTTPError(401, "qwen3.8-flash"),
+            ModelHTTPError(403, "qwen3-vl-flash"),
         ]
     )
 
@@ -78,6 +78,10 @@ class _Connector:
 
 
 async def test_analysis_fails_over_to_second_provider_for_the_whole_saga() -> None:
+    """The activity itself stays provider-agnostic and can fail over across
+    a list of connectors -- production only ever hands it a single Qwen
+    connector today (see `build_ai_connectors`), but this generic capability
+    is still exercised here with fake provider names."""
     calls: list[tuple[str, str]] = []
 
     class _Draft:
@@ -93,7 +97,7 @@ async def test_analysis_fails_over_to_second_provider_for_the_whole_saga() -> No
 
     async def draft(connector, context):
         calls.append((connector.provider_name, "draft"))
-        if connector.provider_name == "anthropic":
+        if connector.provider_name == "primary":
             raise TimeoutError()
         return _DraftResult()
 
@@ -104,7 +108,7 @@ async def test_analysis_fails_over_to_second_provider_for_the_whole_saga() -> No
     activity = RunReportAnalysisActivity(
         uow=None,
         connector=None,
-        connectors=[_Connector("anthropic"), _Connector("openrouter")],
+        connectors=[_Connector("primary"), _Connector("secondary")],
         object_storage=None,
         clock=None,
         id_generator=None,
@@ -131,9 +135,9 @@ async def test_analysis_fails_over_to_second_provider_for_the_whole_saga() -> No
     )
 
     assert calls == [
-        ("anthropic", "draft"),
-        ("openrouter", "draft"),
-        ("openrouter", "audit"),
+        ("primary", "draft"),
+        ("secondary", "draft"),
+        ("secondary", "audit"),
     ]
     assert drafted.work_completed == "Completed"
     assert audit_result is not None
@@ -147,13 +151,13 @@ async def test_provider_failure_log_includes_status_without_response_body(
     async def draft(connector, context):
         raise ModelHTTPError(
             403,
-            "claude-sonnet-4-5",
+            "qwen3.8-flash",
             {"error": "sensitive provider response"},
         )
 
     activity = RunReportAnalysisActivity(
         uow=None,
-        connector=_Connector("anthropic"),
+        connector=_Connector("qwen"),
         object_storage=None,
         clock=None,
         id_generator=None,
@@ -163,7 +167,7 @@ async def test_provider_failure_log_includes_status_without_response_body(
 
     with caplog.at_level(logging.WARNING):
         await activity._try_provider(
-            connector=_Connector("anthropic"),
+            connector=_Connector("qwen"),
             report_id=uuid4(),
             run_id=uuid4(),
             correlation_id=uuid4(),

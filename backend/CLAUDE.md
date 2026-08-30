@@ -26,11 +26,11 @@ uv run ruff check .                                  # lint
 uv run mypy src tests                                # type check
 ```
 
-`docker compose up -d` (from `backend/`) starts Postgres 17, Redis 8, MinIO (+ a one-shot
-bucket-init container), and a LiteLLM proxy in front of OpenRouter. Copy `.env.example` to
-`.env` first and fill in `OPENROUTER_API_KEY` if you want AI drafting to produce real output
-— everything else has working local defaults. Integration tests that touch Postgres/Redis/
-MinIO need this stack running; domain, contract, and workflow tests do not.
+`docker compose up -d` (from `backend/`) starts Postgres 17, Redis 8, and MinIO (+ a one-shot
+bucket-init container). Copy `.env.example` to `.env` first and fill in `DASHSCOPE_API_KEY`
+if you want AI drafting to produce real output — everything else has working local defaults.
+Integration tests that touch Postgres/Redis/MinIO need this stack running; domain, contract,
+and workflow tests do not.
 
 ## Layering rules
 

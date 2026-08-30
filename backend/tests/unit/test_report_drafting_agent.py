@@ -1,5 +1,4 @@
 import pytest
-from httpx import Response
 from pydantic import ValidationError
 from pydantic_ai import Agent, NativeOutput
 from pydantic_ai.models.test import TestModel
@@ -8,13 +7,11 @@ from jobact.shared.infrastructure.llm.connectors import QwenConnector
 from jobact.workflows.report_fulfillment import agent as agent_module
 from jobact.workflows.report_fulfillment.agent import (
     DraftedReport,
-    LiteLlmCostCapture,
     ReportAnalysisContext,
     build_drafting_agent,
     build_drafting_prompt,
     draft_report,
 )
-from tests.fakes import FakeLlmGateway
 
 
 def test_drafting_agent_uses_native_structured_output() -> None:
@@ -58,25 +55,6 @@ def test_estimated_work_units_is_bounded(units: int) -> None:
 
 
 @pytest.mark.asyncio
-async def test_litellm_cost_capture_sums_proxy_response_cost_headers() -> None:
-    capture = LiteLlmCostCapture()
-
-    await capture.capture(
-        Response(
-            200,
-            headers={
-                "x-litellm-response-cost": "0.0012",
-                "x-litellm-model-name": "openrouter/anthropic/claude-sonnet-4.5",
-            },
-        )
-    )
-    await capture.capture(Response(200, headers={"x-litellm-response-cost": "0.0008"}))
-
-    assert capture.cost_usd == 0.002
-    assert capture.model_name == "openrouter/anthropic/claude-sonnet-4.5"
-
-
-@pytest.mark.asyncio
 async def test_draft_report_reads_token_usage_from_the_real_agent_run_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -95,7 +73,7 @@ async def test_draft_report_reads_token_usage_from_the_real_agent_run_result(
     monkeypatch.setattr(agent_module, "build_drafting_agent", build_test_agent)
 
     result = await draft_report(
-        FakeLlmGateway(),
+        QwenConnector(api_key="sk-fake", base_url="https://fake-llm.test"),
         ReportAnalysisContext(
             raw_notes="Replaced a leaking pipe under the sink.",
             customer_name="Ada Lovelace",
@@ -170,7 +148,7 @@ async def test_draft_report_closes_http_client_after_provider_failure(
 
     with pytest.raises(RuntimeError, match="provider unavailable"):
         await draft_report(
-            FakeLlmGateway(),  # type: ignore[arg-type]  # builder replaced
+            QwenConnector(api_key="sk-fake", base_url="https://fake-llm.test"),
             ReportAnalysisContext(
                 raw_notes="Non-sensitive fixture.",
                 customer_name="Test Customer",

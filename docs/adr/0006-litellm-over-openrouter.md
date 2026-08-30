@@ -2,7 +2,12 @@
 
 ## Status
 
-Accepted, implemented (Milestone 1).
+**Superseded.** OpenRouter's own security policy started denying requests from the
+application's hosting network, and the LiteLLM proxy this ADR added was masking that failure
+behind a second, harder-to-diagnose error. The application was moved to Qwen (DashScope) as
+its only AI connector, called directly with no proxy in front of it — see
+[`ai.md`](../architecture/ai.md) for the current provider path. This ADR is kept as a record
+of the trade-off originally made and why it no longer holds, not as live guidance.
 
 ## Context
 

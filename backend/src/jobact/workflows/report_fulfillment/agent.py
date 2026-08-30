@@ -1,10 +1,9 @@
 """The PydanticAI drafting agent -- turns a technician's rough notes
 into a structured report draft.
 
-Bound to LiteLLM via its OpenAI-compatible endpoint (`LlmGateway.
-base_url`/`api_key`) -- the agent owns the actual HTTP call lifecycle
-and structured-output validation directly; `LlmGateway` only supplies
-credentials (see its own docstring in `shared/application/ports.py`).
+Bound directly to Qwen's OpenAI-compatible endpoint via `AiConnector.
+build_model()` -- the agent owns the actual HTTP call lifecycle and
+structured-output validation.
 
 The agent's output is validated before it reaches the report aggregate. In
 particular, the model never emits a price: it returns a count of materially
@@ -16,7 +15,6 @@ LLM can compute or bypass.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 import httpx
@@ -46,36 +44,6 @@ class DraftingResult:
     completion_tokens: int
     cost_usd: float | None
     model: str
-
-
-class LiteLlmCostCapture:
-    """Accumulates LiteLLM's authoritative per-response cost headers."""
-
-    def __init__(self) -> None:
-        self._cost_usd = Decimal(0)
-        self._has_cost = False
-        self._model_name: str | None = None
-
-    async def capture(self, response: httpx.Response) -> None:
-        model_name = response.headers.get("x-litellm-model-name")
-        if model_name:
-            self._model_name = model_name
-        raw_cost = response.headers.get("x-litellm-response-cost")
-        if raw_cost is None:
-            return
-        try:
-            self._cost_usd += Decimal(raw_cost)
-        except InvalidOperation:
-            return
-        self._has_cost = True
-
-    @property
-    def cost_usd(self) -> float | None:
-        return float(self._cost_usd) if self._has_cost else None
-
-    @property
-    def model_name(self) -> str | None:
-        return self._model_name
 
 
 _SYSTEM_PROMPT = (
@@ -172,13 +140,11 @@ async def draft_report(
     connector: AiConnector, context: ReportAnalysisContext
 ) -> DraftingResult:
     settings = get_settings()
-    cost_capture = LiteLlmCostCapture()
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(
             settings.ai_request_timeout_seconds,
             connect=settings.ai_connect_timeout_seconds,
         ),
-        event_hooks={"response": [cost_capture.capture]},
     ) as http_client:
         agent = build_drafting_agent(connector, http_client=http_client)
         result = await agent.run(build_drafting_prompt(context))
@@ -187,7 +153,6 @@ async def draft_report(
         draft=result.output,
         prompt_tokens=usage.input_tokens,
         completion_tokens=usage.output_tokens,
-        cost_usd=cost_capture.cost_usd,
-        model=cost_capture.model_name
-        or connector.model_name("report-drafter"),
+        cost_usd=None,
+        model=connector.model_name("report-drafter"),
     )

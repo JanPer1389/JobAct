@@ -84,7 +84,7 @@ This is a monorepo with the frontend and backend kept as separate projects:
 
 ```text
 frontend/   Next.js prototype UI — see frontend/CLAUDE.md
-backend/    Python (FastAPI/PydanticAI/LiteLLM) backend, managed with uv — see backend/CLAUDE.md
+backend/    Python (FastAPI/PydanticAI) backend, managed with uv — see backend/CLAUDE.md
 docs/       Committed architecture docs and ADRs — see docs/architecture/overview.md
 ```
 
@@ -98,7 +98,7 @@ Prerequisites: Docker Desktop, `backend/.env` (copy from `backend/.env.example`)
 docker compose up -d --build
 ```
 
-This builds and starts everything — Postgres, Redis, MinIO, LiteLLM, the FastAPI `api`
+This builds and starts everything — Postgres, Redis, MinIO, the FastAPI `api`
 service (migrations run automatically on boot), the Redis Streams `worker`, and the Next.js
 `frontend` — from the root [`docker-compose.yml`](docker-compose.yml). No other terminals or
 commands needed.
@@ -106,7 +106,6 @@ commands needed.
 - Frontend: http://localhost:3000
 - API docs: http://localhost:8000/docs
 - MinIO console: http://localhost:9001
-- LiteLLM: http://localhost:4000
 
 Use `docker compose logs -f <service>` to tail logs and `docker compose down` to stop
 everything. Rerun with `--build` after changing a dependency (`pyproject.toml`,
@@ -138,11 +137,11 @@ frontend/public/                    Icons and static assets
 
 ### Backend
 
-Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/), Docker (for Postgres/Redis/MinIO/LiteLLM).
+Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/), Docker (for Postgres/Redis/MinIO).
 
 ```bash
 cd backend
-cp .env.example .env   # fill in OPENROUTER_API_KEY for real AI drafting
+cp .env.example .env   # fill in DASHSCOPE_API_KEY for real AI drafting
 docker compose up -d
 uv sync --dev
 uv run alembic upgrade head
