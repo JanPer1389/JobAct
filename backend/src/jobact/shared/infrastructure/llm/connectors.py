@@ -106,17 +106,9 @@ def build_ai_connector(settings: Settings) -> AiConnector:
 
 
 def build_ai_connectors(settings: Settings) -> list[AiConnector]:
-    """All configured providers in deterministic failover order."""
-    connectors: list[AiConnector] = []
-    if settings.dashscope_api_key.strip():
-        connectors.append(
-            QwenConnector(settings.dashscope_api_key, settings.qwen_base_url)
-        )
-    if settings.anthropic_api_key.strip():
-        connectors.append(AnthropicConnector(settings.anthropic_api_key))
-    if settings.openrouter_api_key.strip():
-        connectors.append(OpenRouterConnector(settings))
-    return connectors
+    """The single selected provider -- Qwen is the only supported connector,
+    with no failover to Anthropic or OpenRouter."""
+    return [build_ai_connector(settings)]
 
 
 def _model_name(models: dict[str, str], alias: str) -> str:

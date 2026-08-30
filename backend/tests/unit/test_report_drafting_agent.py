@@ -1,18 +1,34 @@
 import pytest
 from httpx import Response
 from pydantic import ValidationError
-from pydantic_ai import Agent
+from pydantic_ai import Agent, NativeOutput
 from pydantic_ai.models.test import TestModel
 
+from jobact.shared.infrastructure.llm.connectors import QwenConnector
 from jobact.workflows.report_fulfillment import agent as agent_module
 from jobact.workflows.report_fulfillment.agent import (
     DraftedReport,
     LiteLlmCostCapture,
     ReportAnalysisContext,
+    build_drafting_agent,
     build_drafting_prompt,
     draft_report,
 )
 from tests.fakes import FakeLlmGateway
+
+
+def test_drafting_agent_uses_native_structured_output() -> None:
+    """`materials` is a nested list-of-objects field. Tool-call-mode
+    structured output (the pydantic-ai default) makes some OpenAI-compatible
+    providers -- Qwen included -- return it double-encoded as a JSON string
+    instead of a real array, failing validation. Native output
+    (response_format=json_schema) doesn't have that failure mode.
+    """
+    connector = QwenConnector(api_key="sk-fake", base_url="https://fake-llm.test")
+
+    agent = build_drafting_agent(connector)
+
+    assert isinstance(agent.output_type, NativeOutput)
 
 
 def test_drafted_report_carries_an_estimated_work_unit_count() -> None:

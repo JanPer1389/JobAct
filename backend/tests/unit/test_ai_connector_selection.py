@@ -125,7 +125,9 @@ def test_qwen_connector_uses_direct_model_studio_models() -> None:
     assert visual_model.model_name == "qwen3-vl-flash"
 
 
-def test_all_configured_connectors_are_returned_in_failover_order() -> None:
+def test_build_ai_connectors_never_falls_back_past_qwen() -> None:
+    """Qwen is the only supported connector: even with Anthropic and
+    OpenRouter keys configured, neither is used as a runtime failover."""
     connectors = build_ai_connectors(
         Settings(
             dashscope_api_key="sk-qwen",
@@ -135,8 +137,4 @@ def test_all_configured_connectors_are_returned_in_failover_order() -> None:
         )
     )
 
-    assert [connector.provider_name for connector in connectors] == [
-        "qwen",
-        "anthropic",
-        "openrouter",
-    ]
+    assert [connector.provider_name for connector in connectors] == ["qwen"]
