@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     litellm_master_key: str = "sk-jobact-litellm"
     openrouter_api_key: str = ""
     anthropic_api_key: str = ""
+    dashscope_api_key: str = ""
+    qwen_base_url: str = (
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    )
 
     # --- External call timeouts ---------------------------------------
     # Every outbound AI/storage call is bounded so a hung provider parks
