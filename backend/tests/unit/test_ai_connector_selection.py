@@ -1,5 +1,8 @@
+import json
+
 import httpx
 import pytest
+from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 
@@ -45,6 +48,37 @@ async def test_anthropic_request_uses_injected_client_and_surfaces_provider_fail
 
     assert raised.value.status_code == 401
     assert request_count == 1
+
+
+class _StructuredFixture(BaseModel):
+    result: str
+
+
+@pytest.mark.asyncio
+async def test_qwen_disables_thinking_for_required_structured_output() -> None:
+    captured_body: dict = {}
+
+    def capture_and_reject(request: httpx.Request) -> httpx.Response:
+        captured_body.update(json.loads(request.content))
+        return httpx.Response(
+            400,
+            json={"error": {"message": "diagnostic rejection"}},
+            request=request,
+        )
+
+    connector = QwenConnector(
+        api_key="sk-qwen",
+        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(capture_and_reject)
+    ) as client:
+        model = connector.build_model("report-drafter", http_client=client)
+        with pytest.raises(ModelHTTPError):
+            await Agent(model, output_type=_StructuredFixture).run("Return JSON.")
+
+    assert captured_body["tool_choice"] == "required"
+    assert captured_body["enable_thinking"] is False
 
 
 def test_qwen_wins_when_all_keys_are_present() -> None:

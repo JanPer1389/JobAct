@@ -45,6 +45,7 @@ class QwenConnector:
                 api_key=self._api_key,
                 http_client=http_client,
             ),
+            settings={"extra_body": {"enable_thinking": False}},
         )
 
 
