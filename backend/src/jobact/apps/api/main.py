@@ -1,30 +1,23 @@
-"""The first FastAPI app in this codebase.
+"""The JobAct demo API.
 
-`create_app()` builds and returns the app so tests can construct fresh
-instances (and apply `dependency_overrides`) without importing the
-process-wide `app` singleton below.
+Trimmed for the local-demo downgrade: three stateless endpoints
+(`/api/v1/demo/*`) are the entire surface. There is no database, no
+session, no queue -- see `docs/architecture/overview.md` and
+`docs/adr/000X-local-demo-downgrade.md` for what moved to the browser and
+why. `create_app()` builds and returns the app so tests can construct
+fresh instances without importing the process-wide `app` singleton below.
 """
 
 from fastapi import FastAPI
 
 from jobact.apps.api.error_handlers import register_error_handlers
 from jobact.apps.api.middleware.correlation import CorrelationIdMiddleware
-from jobact.apps.api.middleware.idempotency import IdempotencyMiddleware
-from jobact.apps.api.routers.auth import router as auth_router
-from jobact.apps.api.routers.customers import router as customers_router
-from jobact.apps.api.routers.media import router as media_router
-from jobact.apps.api.routers.reports import router as reports_router
-from jobact.apps.api.routers.visits import router as visits_router
+from jobact.apps.api.routers.demo import router as demo_router
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="JobAct API", version="1")
-    app.include_router(auth_router, prefix="/api/v1")
-    app.include_router(customers_router, prefix="/api/v1")
-    app.include_router(visits_router, prefix="/api/v1")
-    app.include_router(media_router, prefix="/api/v1")
-    app.include_router(reports_router, prefix="/api/v1")
-    app.add_middleware(IdempotencyMiddleware)
+    app = FastAPI(title="JobAct Demo API", version="1")
+    app.include_router(demo_router, prefix="/api/v1")
     # Added last so it runs first: everything downstream, including the
     # error handlers, sees the correlation id.
     app.add_middleware(CorrelationIdMiddleware)

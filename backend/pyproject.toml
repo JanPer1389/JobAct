@@ -10,23 +10,12 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
-    "sqlalchemy[asyncio]",
-    "asyncpg",
-    "alembic",
     "pydantic",
     "pydantic-settings",
-    "redis",
-    "aioboto3",
-    "authlib",
     "httpx",
     "reportlab",
     "pydantic-ai",
-    "argon2-cffi",
-    "email-validator",
-]
-
-[project.optional-dependencies]
-stt = [
+    "python-multipart",
     "av",
     "faster-whisper==1.2.1",
 ]
@@ -35,11 +24,9 @@ stt = [
 dev = [
     "pytest",
     "pytest-asyncio",
-    "testcontainers",
     "ruff",
     "mypy",
     "respx",
-    "types-Authlib",
 ]
 
 [project.scripts]
@@ -92,6 +79,8 @@ extend-immutable-calls = [
     "fastapi.Body",
     "fastapi.Cookie",
     "fastapi.Header",
+    "fastapi.File",
+    "fastapi.Form",
 ]
 
 [tool.mypy]

@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted, implemented (Milestone 1).
+Accepted, implemented (Milestone 1). **Superseded for normal demo operation by
+[ADR-0007](0007-local-demo-downgrade.md)** — the demo uses a local-only name, no server
+session; kept here as the historical record and reference design for a future real
+deployment.
 
 ## Context
 

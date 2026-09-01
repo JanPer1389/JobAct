@@ -1,11 +1,11 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { ChevronRight, MapPin, Clock, ImageIcon, Camera } from "lucide-react"
-import { StatusBadge, SyncIndicator } from "./ui"
-import { type Customer, type Report } from "@/lib/jobact/data"
+import { Camera, Clock } from "lucide-react"
+import { StatusBadge } from "./ui"
+import { type LocalCheck } from "@/lib/jobact/local-store"
 import { useNav } from "@/lib/jobact/store"
-import { formatCurrency, formatDate, formatTime, tPlural } from "@/lib/jobact/i18n"
+import { formatCurrency, formatDate, formatTime } from "@/lib/jobact/i18n"
 
 export function Avatar({
   initials,
@@ -26,7 +26,7 @@ export function Avatar({
   )
 }
 
-function customerInitials(name: string) {
+export function customerInitials(name: string) {
   return name
     .split(" ")
     .slice(0, 2)
@@ -35,48 +35,14 @@ function customerInitials(name: string) {
     .toUpperCase()
 }
 
-export function CustomerCard({
-  customer,
+export function CheckCard({
+  check,
   onClick,
-  selected,
 }: {
-  customer: Customer
+  check: LocalCheck
   onClick?: () => void
-  selected?: boolean
 }) {
   const { locale } = useNav()
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex w-full items-center gap-3 rounded-2xl border bg-card p-3 text-left transition-colors hover:bg-accent",
-        selected ? "border-ring" : "border-border",
-      )}
-    >
-      <Avatar initials={customerInitials(customer.name)} />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">{customer.name}</p>
-        <p className="truncate text-xs text-muted-foreground">{customer.address}</p>
-      </div>
-      <div className="text-right">
-        <p className="text-[11px] text-muted-foreground">{customer.type}</p>
-        <p className="text-[11px] text-muted-foreground/70">{tPlural(locale, "visitsCount", customer.visits)}</p>
-      </div>
-      <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-    </button>
-  )
-}
-
-export function ReportCard({
-  report,
-  onClick,
-  showTech,
-}: {
-  report: Report
-  onClick?: () => void
-  showTech?: boolean
-}) {
-  const { locale, currency: appCurrency } = useNav()
   return (
     <button
       onClick={onClick}
@@ -84,74 +50,31 @@ export function ReportCard({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-foreground">{report.customerName}</p>
-          <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{report.id}</p>
+          <p className="truncate text-sm font-medium text-foreground">{check.customerName}</p>
+          <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{check.humanId}</p>
         </div>
-        <StatusBadge status={report.status} />
+        <StatusBadge status="completed" />
       </div>
       <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-        {report.workCompleted}
+        {check.workCompleted}
       </p>
       <div className="flex items-center justify-between border-t border-border pt-3">
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1">
             <Clock className="size-3" />
-            {formatDate(locale, report.visitedAt)} · {formatTime(locale, report.visitedAt)}
+            {formatDate(locale, check.completedAt)} · {formatTime(locale, check.completedAt)}
           </span>
           <span className="inline-flex items-center gap-1">
             <Camera className="size-3" />
-            {report.beforePhotos + report.afterPhotos}
+            {check.beforePhotoIds.length + check.afterPhotoIds.length}
           </span>
         </div>
         <span className="font-mono text-sm font-semibold tabular-nums text-foreground">
-          {formatCurrency(locale, report.amount, appCurrency)}
+          {check.amountCents === null
+            ? "—"
+            : formatCurrency(locale, check.amountCents / 100, check.currency)}
         </span>
       </div>
-      {showTech && (
-        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-          <span>{report.technician}</span>
-          <SyncIndicator state={report.sync} />
-        </div>
-      )}
     </button>
   )
 }
-
-export function VisitCard({
-  report,
-  onClick,
-}: {
-  report: Report
-  onClick?: () => void
-}) {
-  const { locale } = useNav()
-  return (
-    <button
-      onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-2xl border border-border bg-card p-3 text-left transition-colors hover:bg-accent"
-    >
-      <div
-        className="grid size-11 shrink-0 place-items-center rounded-xl border border-border text-muted-foreground"
-        style={{
-          background:
-            "repeating-linear-gradient(135deg, oklch(0.26 0 0) 0 6px, oklch(0.23 0 0) 6px 12px)",
-        }}
-      >
-        <ImageIcon className="size-4" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">{report.customerName}</p>
-        <p className="flex items-center gap-1 truncate text-xs text-muted-foreground">
-          <MapPin className="size-3 shrink-0" />
-          {report.address}
-        </p>
-      </div>
-      <div className="text-right">
-        <p className="text-xs font-medium text-foreground">{formatTime(locale, report.visitedAt)}</p>
-        <p className="text-[11px] text-muted-foreground">{formatDate(locale, report.visitedAt, { month: "short", day: "numeric" })}</p>
-      </div>
-    </button>
-  )
-}
-
-export { customerInitials }

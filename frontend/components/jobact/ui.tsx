@@ -22,7 +22,7 @@ import {
   type InputHTMLAttributes,
   type ReactNode,
 } from "react"
-import type { ReportStatus, SyncState } from "@/lib/jobact/data"
+import type { ReportStatus, SyncState } from "@/lib/jobact/local-store"
 import { useNav } from "@/lib/jobact/store"
 import { statusLabel, syncLabel, t } from "@/lib/jobact/i18n"
 

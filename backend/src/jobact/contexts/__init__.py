@@ -1,6 +1,6 @@
-"""Bounded contexts: identity, customers, visits, reports, media, etc.
-
-Each context is a self-contained vertical slice (domain/application/
-infrastructure/api) around one business capability. Contexts may depend
-on `jobact.shared`, never on each other's internals directly.
+"""One surviving vertical slice: `reports/domain/pricing.py`, the
+deterministic work-unit -> price rule. Everything else that used to live
+under `contexts/` (identity, customers, visits, media, the report and
+visual-audit aggregates) was server-side persistence removed by the
+local-demo downgrade -- see `docs/adr/000X-local-demo-downgrade.md`.
 """

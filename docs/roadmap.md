@@ -1,59 +1,45 @@
 # Roadmap
 
-Milestone 1 (this repository's current state) proves one vertical slice end-to-end: visit →
-AI-drafted report → real customer signature → signed PDF, with cookie-based Google sign-in.
-See [`docs/architecture/overview.md`](architecture/overview.md) for what's real vs. simulated
-today.
+The repository's current state is a local demo, not a production deployment — see
+[`docs/architecture/overview.md`](architecture/overview.md) and
+[ADR-0007](adr/0007-local-demo-downgrade.md) for what the demo pipeline is and why the
+production-shaped Milestone 1 architecture (Postgres, Redis, MinIO, Google OAuth, a durable
+workflow engine) was set aside. Milestone 1's own history is preserved in
+[ADR-0001](adr/0001-modular-monolith.md) through [ADR-0005](adr/0005-outbox-saga-idempotency.md).
 
-## Milestone 2 — Photos, GPS, offline queue
+## The demo pipeline today
 
-- Real camera capture and upload, reusing the existing `MediaAsset` pending_upload → uploaded
-  → attached pipeline and presigned-URL flow (already proven end-to-end by the signature
-  upload) — this is endpoint reuse, not new plumbing.
-- Real device GPS instead of the fixed simulated coordinate PATCHed today.
-- The offline queue PAPERCUT's design assumes: client-side command queuing while offline,
-  replayed on reconnect. Milestone 1 deliberately only laid the groundwork this needs
-  (client-generated entity UUIDs, `Idempotency-Key` on every mutation) without building the
-  queue itself.
-- A lint or CI check enforcing the no-cross-context-infrastructure-import rule from
-  [ADR-0001](adr/0001-modular-monolith.md), before more contexts make a violation likely.
+```text
+Demo entry (local name only) → Создать чек → job info → GPS → before photos
+  → voice or typed notes → real Whisper transcription → after photos
+  → real Qwen drafting + visual audit → deterministic suggested price
+  → review/edit → signature → real PDF → local check history
+```
 
-## Milestone 3 — Speech-to-text
+Everything above is real and working: real device GPS and camera capture, real browser audio
+recording transcribed by an unmodified faster-whisper pipeline, real Qwen-drafted work
+descriptions and visual before/after comparison, real deterministic pricing, a real signature
+capture, and a real signed PDF. What's local rather than server-persisted is the draft/evidence/
+history data itself — see [`frontend/CLAUDE.md`](../frontend/CLAUDE.md).
 
-- `TranscribeAudioActivity`, populating the same `raw_notes` field the AI drafting agent
-  already reads (see [`ai.md`](architecture/ai.md)) — no change needed downstream of it.
-- Registering `TRANSCRIPTION_PENDING` in the workflow's `ALLOWED_TRANSITIONS`
-  (`workflows/report_fulfillment/states.py`); it's already defined in the design, just
-  unregistered because nothing produces it yet.
-- The opt-in live-model smoke test (`JOBACT_LIVE_LLM_TESTS=1`, gated off in CI) that Milestone
-  1's plan called for but that was not written this session — see [`ai.md`](architecture/ai.md).
+## Returning to a production-shaped deployment
 
-## Milestone 4 — Delivery, analytics, attribution
+Should this demo need to become a real multi-user product again, the Milestone 1 ADRs describe
+a design that already solved the harder problems (durable AI/STT execution surviving a
+disconnect, multi-tenant auth, permanent evidence storage, exactly-once workflow execution).
+The AI/STT product logic itself never changed, so re-attaching it to that architecture is
+mechanical: replace the three stateless endpoints' direct calls with the same durable-workflow
+activities Milestone 1 already had (`workflows/report_fulfillment/`'s deleted
+`run_report_analysis.py`/`generate_pdf.py`/`transcribe_audio.py`'s claim-and-lease orchestration
+are recoverable from git history at the commit before [ADR-0007](adr/0007-local-demo-downgrade.md)
+landed), and reintroduce Postgres/Redis/MinIO/auth per ADR-0001/0003/0004/0005.
 
-- `DELIVERY_PENDING` (defined, unregistered, same as `TRANSCRIPTION_PENDING`) and a
-  `DeliverReportActivity` — sending the completed PDF to the customer.
-- The `attribution` and `analytics` Postgres schemas PAPERCUT specifies but Milestone 1
-  deliberately deferred (see [ADR-0001](adr/0001-modular-monolith.md) and
-  [`erd.md`](architecture/erd.md)) — `analytics.user_milestones`, `analytics.product_events`,
-  `attribution.touchpoints`, `attribution.user_attribution`.
-- Adopting PAPERCUT's dotted event-name taxonomy (`report.signed`, `media.upload_completed`,
-  ...) for `platform.outbox.event_type`, replacing or supplementing today's Python-class-name
-  values — see the naming deviation recorded in [`events.md`](architecture/events.md) — and
-  emitting the domain events that today are notably *not* emitted (customer creation, media
-  attach, report confirm/sign, workflow transitions) now that something outside the workflow
-  itself needs to react to them.
-- Populating the `audit` schema (created but empty since the Milestone 1 baseline migration)
-  with an actual `audit.audit_log` table and the handlers that write to it.
-- A legal/compliance review of data residency, consent, and retention for the Russian launch
-  PAPERCUT's design targets — flagged in [ADR-0004](adr/0004-cookie-sessions-google-oidc.md)
-  regarding Google OIDC specifically, and more broadly wherever personal data, location, or
-  device identifiers are collected.
+## Open items, demo scope
 
-## Open items not tied to a specific milestone
-
-- `correlation_id`/`causation_id` are in PAPERCUT's original event envelope sketch but not yet
-  threaded through `DomainEvent` or the outbox row (see [`events.md`](architecture/events.md))
-  — needed once tracing a chain of triggered events becomes necessary.
-- Amending a signed report (PAPERCUT: "corrections create a new revision chain") is refused by
-  the domain state machine today rather than supported — the state machine already protects
-  the invariant, but the amendment endpoint itself doesn't exist yet.
+- No opt-in live-model smoke test exists yet (`JOBACT_LIVE_LLM_TESTS=1` was planned in
+  Milestone 1 and never written) — verifying a real Qwen round trip is still a manual step; see
+  [`ai.md`](architecture/ai.md#testing).
+- IndexedDB storage is unbounded except for a 20-check history cap and the existing photo/audio
+  size limits — no explicit total-quota UI beyond the `QuotaExceededError` fallback state.
+- `frontend/components/jobact/screens/detail.tsx`'s `CheckDetailScreen` is read-only; there is
+  no local check editing/deletion UI beyond the automatic 20-check prune.

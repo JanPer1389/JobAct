@@ -1,3 +1,11 @@
+/** Thin client for the three stateless `/api/v1/demo/*` endpoints -- the
+ * backend's entire surface after the local-demo downgrade. There is no
+ * session, no idempotency key, and no JSON-only body: every mutating
+ * call here posts `multipart/form-data` (bytes plus a JSON `context`
+ * field) and gets back either a JSON result or, for the PDF endpoint,
+ * the rendered file directly.
+ */
+
 export interface ApiErrorDetail {
   loc: Array<string | number>
   message: string
@@ -20,99 +28,6 @@ export class JobActApiError extends Error {
     this.name = "JobActApiError"
     this.response = response
   }
-}
-
-export interface CustomerResponse {
-  id: string
-  name: string
-  address: string
-  phone: string
-  service_type: string
-  created_at: string
-}
-
-export interface VisitResponse {
-  id: string
-  customer_id: string
-  technician_id: string
-  status: string
-  started_at: string
-  gps_lat: number | null
-  gps_lon: number | null
-  gps_accuracy_m: number | null
-  before_photo_count: number
-  after_photo_count: number
-}
-
-export interface ReportMaterial {
-  label: string
-  qty: string
-}
-
-export interface ReportResponse {
-  id: string
-  human_id: string
-  status: string
-  visit_id: string
-  current_revision: {
-    id: string
-    revision_no: number
-    source: string
-    work_completed: string
-    amount_cents: number | null
-    currency: string
-    ai_confidence: string | null
-    confirmed_by_user_at: string | null
-    amount_confirmed_at: string | null
-    frozen_at: string | null
-    materials: ReportMaterial[]
-    visual_comparison_status: string | null
-    visual_comparison: VisualAuditResult | null
-  }
-  signed_at: string | null
-  completed_at: string | null
-  workflow_state: WorkflowState | null
-  workflow_error: {
-    code: string
-    http_status: number
-    message: string
-    retryable: boolean
-  } | null
-  pdf_media_asset_id: string | null
-  transcription?: {
-    status: "queued" | "running" | "completed" | "failed"
-    media_asset_id: string
-    transcript: string | null
-    detected_language: string | null
-  } | null
-}
-
-export type WorkflowState =
-  | "COLLECTING_EVIDENCE"
-  | "TRANSCRIPTION_PENDING"
-  | "DRAFTING_PENDING"
-  | "REVIEW_PENDING"
-  | "SIGNATURE_PENDING"
-  | "FINALIZATION_PENDING"
-  | "PDF_PENDING"
-  | "COMPLETED"
-  | "MANUAL_INPUT_REQUIRED"
-  | "FAILED"
-
-export interface ManualRecoveryResponse {
-  raw_notes: string
-  stage: "analysis" | "pdf"
-}
-
-export interface MediaUploadResponse {
-  media_asset_id: string
-  upload_url: string
-  expires_at: string
-}
-
-export interface AuthMethodsResponse {
-  password: boolean
-  google: boolean
 }
 
 export interface VisualAuditResult {
@@ -141,37 +56,53 @@ export interface VisualAuditResult {
   recommended_next_steps: string[]
 }
 
-const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"])
+export interface TranscribeResponse {
+  transcript: string
+  detected_language: string | null
+  duration_seconds: number
+}
 
-export async function apiFetch<T>(
-  input: string,
-  init: RequestInit = {},
-): Promise<T> {
-  const headers = new Headers(init.headers)
-  const method = (init.method ?? "GET").toUpperCase()
+export interface AnalyzeMaterial {
+  label: string
+  qty: string
+}
 
-  if (MUTATION_METHODS.has(method) && !headers.has("Idempotency-Key")) {
-    headers.set("Idempotency-Key", crypto.randomUUID())
-  }
-  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json")
-  }
+export interface AnalyzeContext {
+  raw_notes: string
+  customer_name: string
+  customer_address: string
+  customer_service_type: string
+  gps_lat: number | null
+  gps_lon: number | null
+  currency: "USD" | "RUB"
+  locale: "en-US" | "ru-RU"
+}
 
-  const response = await fetch(input, {
-    ...init,
-    method,
-    headers,
-    credentials: "include",
-  })
+export interface AnalyzeResponse {
+  work_completed: string
+  materials: AnalyzeMaterial[]
+  estimated_work_units: number | null
+  suggested_amount_cents: number | null
+  currency: string
+  confidence: "high" | "medium" | "low"
+  visual_comparison: VisualAuditResult
+}
 
-  if (!response.ok) {
-    throw new JobActApiError(await readErrorEnvelope(response))
-  }
-  if (response.status === 204) {
-    return undefined as T
-  }
-
-  return (await response.json()) as T
+export interface CheckPdfContext {
+  report_number: string
+  customer_name: string
+  customer_address: string
+  customer_phone: string
+  customer_service_type: string
+  timestamp: string
+  gps_lat: number | null
+  gps_lon: number | null
+  work_completed: string
+  materials: AnalyzeMaterial[]
+  amount_cents: number | null
+  currency: "USD" | "RUB"
+  signer_name: string
+  locale: "en-US" | "ru-RU"
 }
 
 async function readErrorEnvelope(response: Response): Promise<ApiErrorEnvelope> {
@@ -209,4 +140,47 @@ function isErrorEnvelope(value: unknown): value is ApiErrorEnvelope {
     typeof candidate.correlation_id === "string" &&
     Array.isArray(candidate.errors)
   )
+}
+
+async function postForJson<T>(path: string, form: FormData, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, { method: "POST", body: form, signal })
+  if (!response.ok) throw new JobActApiError(await readErrorEnvelope(response))
+  return (await response.json()) as T
+}
+
+export async function transcribeRecording(
+  file: Blob,
+  filename: string,
+  signal?: AbortSignal,
+): Promise<TranscribeResponse> {
+  const form = new FormData()
+  form.set("file", file, filename)
+  return postForJson<TranscribeResponse>("/api/v1/demo/transcribe", form, signal)
+}
+
+export async function analyzeReport(
+  context: AnalyzeContext,
+  photoPairs: Array<{ before: Blob; after: Blob }>,
+  signal?: AbortSignal,
+): Promise<AnalyzeResponse> {
+  const form = new FormData()
+  form.set("context", JSON.stringify(context))
+  photoPairs.forEach((pair, index) => {
+    form.append("before", pair.before, `before-${index}.jpg`)
+    form.append("after", pair.after, `after-${index}.jpg`)
+  })
+  return postForJson<AnalyzeResponse>("/api/v1/demo/analyze", form, signal)
+}
+
+export async function renderCheckPdf(
+  context: CheckPdfContext,
+  signaturePng: Blob,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const form = new FormData()
+  form.set("context", JSON.stringify(context))
+  form.set("signature", signaturePng, "signature.png")
+  const response = await fetch("/api/v1/demo/check-pdf", { method: "POST", body: form, signal })
+  if (!response.ok) throw new JobActApiError(await readErrorEnvelope(response))
+  return response.blob()
 }

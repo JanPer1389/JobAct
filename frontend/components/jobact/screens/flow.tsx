@@ -27,38 +27,29 @@ import {
   AmountField,
   ScreenHeader,
   SectionLabel,
-  PhotoThumb,
   CaptureButton,
   SignatureCanvas,
   SuccessMark,
   StatusBadge,
-  SyncIndicator,
 } from "../ui"
 import { Page, ActionBar } from "../shell"
 import { Avatar } from "../cards"
+import { humanReportId, useNav } from "@/lib/jobact/store"
 import {
-  customers as allCustomers,
-  currency,
-} from "@/lib/jobact/data"
-import { useNav } from "@/lib/jobact/store"
-import {
-  apiFetch,
-  type CustomerResponse,
-  type MediaUploadResponse,
-  type ReportResponse,
-  type VisitResponse,
+  JobActApiError,
+  analyzeReport,
+  renderCheckPdf,
+  transcribeRecording,
+  type AnalyzeContext,
 } from "@/lib/jobact/api"
-import { pollReportUntilState } from "@/lib/jobact/polling"
-import { uploadVisitAudio, uploadVisitPhoto } from "@/lib/jobact/media"
+import { saveVisitPhoto, validateVisitAudio } from "@/lib/jobact/media"
 import { BrowserAudioRecorder, type RecordingState } from "@/lib/jobact/audio-recorder"
-import { analysisInputKey } from "@/lib/jobact/analysis-run"
 import { formatGpsEvidence } from "@/lib/jobact/location-evidence"
-import { analysisFailurePresentation } from "@/lib/jobact/workflow-errors"
+import { finalizeDraft, getBlob, putBlob, saveCheck } from "@/lib/jobact/local-store"
+import { setActiveDraftId } from "@/lib/jobact/local-prefs"
 import {
-  confidenceLabel,
   formatCurrency,
   formatDateTime,
-  statusLabel,
   t,
   tPlural,
   verdictLabel,
@@ -70,71 +61,27 @@ function currencySymbol(currency: string | undefined) {
   return currency === "RUB" ? "₽" : "$"
 }
 
-function useCustomer() {
-  const { frame, draft, locale } = useNav()
-  const id = (frame.params.customerId as string) || draft.customerId
-  const known = allCustomers.find((c) => c.id === id)
-  return {
-    name: known?.name || draft.customerName || t(locale, "newCustomerFallback"),
-    address: known?.address || draft.address || t(locale, "addressOnFileFallback"),
-    type: known?.type || t(locale, "defaultServiceType"),
-  }
-}
-
 function FlowFooter({ children }: { children: React.ReactNode }) {
   return <ActionBar width="form">{children}</ActionBar>
 }
 
-/* ---------------------------- ADD CUSTOMER ---------------------------- */
+/* --------------------------- CUSTOMER / JOB INFO ----------------------- */
 
 export function AddCustomerScreen() {
-  const { back, replace, frame, setDraft, locale } = useNav()
-  const picking = Boolean(frame.params.picking)
+  const { back, navigate, setDraft, locale } = useNav()
   const [name, setName] = useState("")
   const [address, setAddress] = useState("")
   const [phone, setPhone] = useState("")
   const [serviceType, setServiceType] = useState("")
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const saveKey = useRef(crypto.randomUUID())
 
-  async function saveCustomer() {
-    setSaving(true)
-    setError(null)
-    try {
-      const customer = await apiFetch<CustomerResponse>("/api/v1/customers", {
-        method: "POST",
-        headers: { "Idempotency-Key": saveKey.current },
-        body: JSON.stringify({
-          name,
-          address,
-          phone,
-          service_type: serviceType || t(locale, "defaultServiceType"),
-        }),
-      })
-      setDraft({
-        customerId: customer.id,
-        customerName: customer.name,
-        address: customer.address,
-        visitId: undefined,
-        reportId: undefined,
-        revisionId: undefined,
-        signatureAssetId: undefined,
-        rawNotes: "",
-        report: undefined,
-        beforePhotoAssets: [],
-        afterPhotoAssets: [],
-        workCompleted: "",
-        amount: "",
-        signed: false,
-      })
-      if (picking) replace("visitStart", { customerId: customer.id })
-      else back()
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t(locale, "couldNotSaveCustomer"))
-    } finally {
-      setSaving(false)
-    }
+  function saveCustomer() {
+    setDraft({
+      customerName: name,
+      customerAddress: address,
+      customerPhone: phone,
+      customerServiceType: serviceType || t(locale, "defaultServiceType"),
+    })
+    navigate("visitStart")
   }
 
   return (
@@ -144,20 +91,19 @@ export function AddCustomerScreen() {
         <div className="space-y-4">
           <Input id="name" label={t(locale, "customerNameLabel")} placeholder={t(locale, "customerNamePlaceholder")} value={name} onChange={(e) => setName(e.target.value)} />
           <Input id="address" label={t(locale, "addressLabel")} icon={MapPin} placeholder={t(locale, "addressPlaceholder")} value={address} onChange={(e) => setAddress(e.target.value)} />
-          <Input id="phone" label={t(locale, "phoneLabel")} type="tel" placeholder="+1 (___) ___-____" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <Input id="phone" label={t(locale, "phoneLabel")} type="tel" placeholder="+7 (___) ___-____" value={phone} onChange={(e) => setPhone(e.target.value)} />
           <Input id="type" label={t(locale, "serviceTypeLabel")} placeholder={t(locale, "serviceTypePlaceholder")} hint={t(locale, "serviceTypeHint")} value={serviceType} onChange={(e) => setServiceType(e.target.value)} />
-          {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
       </Page>
       <FlowFooter>
         <Button
           size="lg"
           fullWidth
-          disabled={!name.trim() || !address.trim() || !phone.trim() || saving}
-          iconRight={picking ? ArrowRight : undefined}
+          disabled={!name.trim() || !address.trim() || !phone.trim()}
+          iconRight={ArrowRight}
           onClick={saveCustomer}
         >
-          {picking ? t(locale, "saveAndContinue") : t(locale, "saveCustomerBtn")}
+          {t(locale, "saveAndContinue")}
         </Button>
       </FlowFooter>
     </>
@@ -167,32 +113,8 @@ export function AddCustomerScreen() {
 /* ----------------------------- VISIT START ---------------------------- */
 
 export function VisitStartScreen() {
-  const { back, navigate, frame, draft, setDraft, locale } = useNav()
-  const customer = useCustomer()
+  const { back, navigate, draft, locale } = useNav()
   const now = new Date()
-  const visitId = useRef(crypto.randomUUID())
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const startKey = useRef(crypto.randomUUID())
-
-  async function startVisit() {
-    if (!draft.customerId) return
-    setSaving(true)
-    setError(null)
-    try {
-      const visit = await apiFetch<VisitResponse>("/api/v1/visits", {
-        method: "POST",
-        headers: { "Idempotency-Key": startKey.current },
-        body: JSON.stringify({ id: visitId.current, customer_id: draft.customerId }),
-      })
-      setDraft({ visitId: visit.id })
-      navigate("gps", frame.params)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t(locale, "couldNotStartVisit"))
-    } finally {
-      setSaving(false)
-    }
-  }
 
   return (
     <>
@@ -200,11 +122,11 @@ export function VisitStartScreen() {
       <Page width="form">
         <Card className="p-4">
           <div className="flex items-center gap-3">
-            <Avatar initials={customer.name.slice(0, 2).toUpperCase()} className="size-12 rounded-2xl" />
+            <Avatar initials={draft.customerName.slice(0, 2).toUpperCase() || "??"} className="size-12 rounded-2xl" />
             <div className="min-w-0">
-              <p className="text-base font-semibold text-foreground">{customer.name}</p>
+              <p className="text-base font-semibold text-foreground">{draft.customerName}</p>
               <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                <MapPin className="size-3" /> {customer.address}
+                <MapPin className="size-3" /> {draft.customerAddress}
               </p>
             </div>
           </div>
@@ -221,11 +143,10 @@ export function VisitStartScreen() {
         <p className="mt-3 px-1 text-xs leading-relaxed text-muted-foreground">
           {t(locale, "dateTimeGpsNote")}
         </p>
-        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
-        <Button size="lg" fullWidth iconRight={ArrowRight} disabled={saving} onClick={startVisit}>
-          {saving ? t(locale, "startingVisitEllipsis") : t(locale, "confirmLocationBtn")}
+        <Button size="lg" fullWidth iconRight={ArrowRight} onClick={() => navigate("gps")}>
+          {t(locale, "confirmLocationBtn")}
         </Button>
       </FlowFooter>
     </>
@@ -302,14 +223,10 @@ function describeLocationError(locale: AppLocale, err: unknown): string {
 }
 
 export function GpsScreen() {
-  const { back, navigate, frame, draft, setDraft, locale } = useNav()
+  const { back, navigate, draft, setDraft, locale } = useNav()
   const [state, setState] = useState<"locating" | "found" | "error">("locating")
   const [point, setPoint] = useState<GeoPoint | null>(null)
   const [locateError, setLocateError] = useState<string | null>(null)
-  const customer = useCustomer()
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const locationKey = useRef(crypto.randomUUID())
 
   function locate() {
     setState("locating")
@@ -329,27 +246,10 @@ export function GpsScreen() {
     locate()
   }, [])
 
-  async function confirmLocation() {
-    if (!draft.visitId || !point) return
-    setSaving(true)
-    setError(null)
-    try {
-      await apiFetch<VisitResponse>(`/api/v1/visits/${draft.visitId}`, {
-        method: "PATCH",
-        headers: { "Idempotency-Key": locationKey.current },
-        body: JSON.stringify({
-          gps_lat: point.lat,
-          gps_lon: point.lon,
-          gps_accuracy_m: point.accuracy,
-        }),
-      })
-      setDraft({ gpsLat: point.lat, gpsLon: point.lon, gpsAccuracyM: point.accuracy })
-      navigate("beforePhotos", frame.params)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t(locale, "couldNotSaveLocation"))
-    } finally {
-      setSaving(false)
-    }
+  function confirmLocation() {
+    if (!point) return
+    setDraft({ gpsLat: point.lat, gpsLon: point.lon, gpsAccuracyM: point.accuracy })
+    navigate("beforePhotos")
   }
 
   return (
@@ -403,7 +303,7 @@ export function GpsScreen() {
               </span>
             )}
           </div>
-          <p className="mt-2 text-sm text-muted-foreground">{customer.address}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{draft.customerAddress}</p>
           <p className="mt-1 font-mono text-xs text-muted-foreground/70">
             {state === "found" && point
               ? formatGpsEvidence(point)
@@ -415,7 +315,6 @@ export function GpsScreen() {
         {state === "error" && locateError && (
           <p className="mt-3 text-sm text-destructive">{locateError}</p>
         )}
-        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
         {state === "error" ? (
@@ -426,11 +325,11 @@ export function GpsScreen() {
           <Button
             size="lg"
             fullWidth
-            disabled={state !== "found" || saving}
+            disabled={state !== "found"}
             iconRight={ArrowRight}
             onClick={confirmLocation}
           >
-            {state === "found" ? (saving ? t(locale, "saving") : t(locale, "locationConfirmedBtn")) : t(locale, "locatingEllipsis")}
+            {state === "found" ? t(locale, "locationConfirmedBtn") : t(locale, "locatingEllipsis")}
           </Button>
         )}
       </FlowFooter>
@@ -438,10 +337,10 @@ export function GpsScreen() {
   )
 }
 
-/* --------------------------- BEFORE PHOTOS ---------------------------- */
+/* --------------------------- BEFORE / AFTER PHOTOS --------------------- */
 
 export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
-  const { back, navigate, frame, draft, setDraft, locale } = useNav()
+  const { back, navigate, draft, setDraft, locale } = useNav()
   const photos = phase === "before" ? draft.beforePhotoAssets : draft.afterPhotoAssets
   const maxPhotos = phase === "before" ? 6 : draft.beforePhotoAssets.length
   const [uploading, setUploading] = useState(false)
@@ -449,13 +348,13 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   async function addFiles(files: FileList | null) {
-    if (!files || !draft.visitId) return
+    if (!files) return
     setUploading(true)
     setError(null)
     try {
       let next = [...photos]
       for (const file of Array.from(files).slice(0, maxPhotos - photos.length)) {
-        next = [...next, await uploadVisitPhoto(file, phase, draft.visitId)]
+        next = [...next, await saveVisitPhoto(file, phase, draft.id)]
         if (phase === "before") {
           setDraft({ beforePhotoAssets: next })
         } else {
@@ -489,7 +388,7 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
   const pairCountValid = phase === "before" ? count >= 1 : count === draft.beforePhotoAssets.length
 
   function continueFlow() {
-    navigate(next, frame.params)
+    navigate(next)
   }
 
   return (
@@ -570,11 +469,10 @@ export function PhotosScreen({ phase }: { phase: "before" | "after" }) {
 /* ------------------------------- NOTES -------------------------------- */
 
 export function NotesScreen() {
-  const { back, navigate, frame, draft, setDraft, locale } = useNav()
+  const { back, navigate, draft, setDraft, locale } = useNav()
   const [notes, setNotes] = useState(draft.rawNotes)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const notesKey = useRef(crypto.randomUUID())
   const recorder = useRef(new BrowserAudioRecorder())
   const [recordingState, setRecordingState] = useState<RecordingState>("ready")
   const tooShort = notes.trim().length < 20
@@ -582,7 +480,6 @@ export function NotesScreen() {
   useEffect(() => () => recorder.current.release(), [])
 
   async function recordVoice() {
-    if (!draft.visitId) return
     setError(null)
     try {
       const recording = recorder.current.start(setRecordingState)
@@ -590,30 +487,35 @@ export function NotesScreen() {
       const blob = await recording
       setRecordingState("preparing")
       const extension = blob.type === "audio/mp4" ? "mp4" : "webm"
+      const file = new File([blob], `voice-note.${extension}`, { type: blob.type })
+      validateVisitAudio(file)
       setRecordingState("uploading")
-      const audioAssetId = await uploadVisitAudio(
-        new File([blob], `voice-note.${extension}`, { type: blob.type }),
-        draft.visitId,
-      )
-      setDraft({ audioAssetId, notesSource: "voice", rawNotes: "" })
-      setNotes("")
+      const transcribed = await transcribeRecording(file, file.name)
+      setDraft({ notesSource: "voice", rawNotes: transcribed.transcript })
+      setNotes(transcribed.transcript)
       setRecordingState("ready")
     } catch (reason) {
       setRecordingState("failed")
-      setError(reason instanceof Error ? reason.message : t(locale, "microphoneUnavailable"))
+      setError(
+        reason instanceof JobActApiError
+          ? reason.response.detail
+          : reason instanceof Error
+            ? reason.message
+            : t(locale, "microphoneUnavailable"),
+      )
     }
   }
 
   function switchToTyped(value: string) {
     recorder.current.release()
     setNotes(value)
-    setDraft({ notesSource: "typed", audioAssetId: undefined })
+    setDraft({ notesSource: "typed" })
   }
 
   function chooseTyped() {
     recorder.current.release()
     setRecordingState("ready")
-    setDraft({ notesSource: "typed", audioAssetId: undefined })
+    setDraft({ notesSource: "typed" })
   }
 
   function chooseVoice() {
@@ -621,32 +523,18 @@ export function NotesScreen() {
     setDraft({ notesSource: "voice", rawNotes: "" })
   }
 
-  async function saveNotes() {
+  function saveNotes() {
     const isTypedInput = draft.notesSource === "typed"
-    if (
-      !draft.visitId ||
-      (isTypedInput && tooShort) ||
-      (!isTypedInput && !draft.audioAssetId)
-    ) {
+    if ((isTypedInput && tooShort) || (!isTypedInput && !draft.rawNotes)) {
       return
     }
     setSaving(true)
     setError(null)
-    try {
-      if (draft.notesSource === "typed") {
-        await apiFetch<VisitResponse>(`/api/v1/visits/${draft.visitId}`, {
-          method: "PATCH",
-          headers: { "Idempotency-Key": notesKey.current },
-          body: JSON.stringify({ raw_notes: notes }),
-        })
-        setDraft({ rawNotes: notes })
-      }
-      navigate("afterPhotos", frame.params)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t(locale, "couldNotSaveNotes"))
-    } finally {
-      setSaving(false)
+    if (draft.notesSource === "typed") {
+      setDraft({ rawNotes: notes })
     }
+    navigate("afterPhotos")
+    setSaving(false)
   }
 
   return (
@@ -721,7 +609,9 @@ export function NotesScreen() {
           {recordingState === "recording" && <p className="mt-2 text-xs text-muted-foreground">{t(locale, "recordingInProgress")}</p>}
           {recordingState === "preparing" && <p className="mt-2 text-xs text-muted-foreground">{t(locale, "preparingRecording")}</p>}
           {recordingState === "uploading" && <p className="mt-2 text-xs text-muted-foreground">{t(locale, "uploadingRecording")}</p>}
-          {draft.audioAssetId && <p className="mt-2 text-xs text-success">{t(locale, "recordingUploaded")}</p>}
+          {draft.notesSource === "voice" && draft.rawNotes && (
+            <p className="mt-3 rounded-lg bg-muted p-3 text-xs leading-relaxed text-foreground">{draft.rawNotes}</p>
+          )}
         </div>}
         {draft.notesSource === "typed" && <p className="mt-2 text-xs text-muted-foreground">
           {tooShort ? t(locale, "tooShortHint") : t(locale, "roughNotesFine")}
@@ -733,7 +623,7 @@ export function NotesScreen() {
           size="lg"
           fullWidth
           iconRight={ArrowRight}
-          disabled={(draft.notesSource === "typed" ? tooShort : !draft.audioAssetId) || saving}
+          disabled={(draft.notesSource === "typed" ? tooShort : !draft.rawNotes) || saving}
           onClick={saveNotes}
         >
           {saving
@@ -749,27 +639,33 @@ export function NotesScreen() {
 
 /* ------------------------- ANALYSIS PROCESSING ------------------------ */
 
+function analysisErrorMessage(locale: AppLocale, error: unknown): { message: string; retryable: boolean } {
+  if (error instanceof JobActApiError) {
+    switch (error.response.type) {
+      case "ai-provider-configuration-error":
+      case "ai-not-configured":
+        return { message: t(locale, "analysisProviderConfigurationError"), retryable: false }
+      case "ai-analysis-timeout":
+        return { message: t(locale, "analysisTimedOutError"), retryable: true }
+      case "evidence-incomplete":
+      case "photos-not-paired":
+        return { message: t(locale, "photosMustFormPairs"), retryable: true }
+      default:
+        return { message: error.response.detail || t(locale, "analysisIncompleteError"), retryable: true }
+    }
+  }
+  return { message: error instanceof Error ? error.message : t(locale, "couldNotAnalyseVisit"), retryable: true }
+}
+
 export function AnalysisProcessingScreen() {
-  const { navigate, replace, reset, frame, draft, setDraft, locale } = useNav()
-  const analysisSteps = [
-    t(locale, "uploadingEvidence"),
-    t(locale, "draftingReport"),
-    t(locale, "comparingPhotos"),
-  ]
+  const { navigate, replace, reset, draft, setDraft, currency, locale } = useNav()
+  const analysisSteps = [t(locale, "uploadingEvidence"), t(locale, "draftingReport"), t(locale, "comparingPhotos")]
   const [active, setActive] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [canRetry, setCanRetry] = useState(true)
   const [attempt, setAttempt] = useState(0)
-  const reportKey = useRef(crypto.randomUUID())
-  const analysisKey = analysisInputKey({
-    visitId: draft.visitId,
-    rawNotes: draft.rawNotes,
-    audioAssetId: draft.audioAssetId,
-    beforePhotoCount: draft.beforePhotoAssets.length,
-    afterPhotoCount: draft.afterPhotoAssets.length,
-  })
-  const navigation = useRef({ draft, frameParams: frame.params, replace, setDraft })
-  navigation.current = { draft, frameParams: frame.params, replace, setDraft }
+  const navigation = useRef({ draft, currency, navigate, replace, setDraft })
+  navigation.current = { draft, currency, navigate, replace, setDraft }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -778,7 +674,7 @@ export function AnalysisProcessingScreen() {
     const currentDraft = current.draft
 
     async function runAnalysis() {
-      if (!currentDraft.visitId || (!currentDraft.rawNotes && !currentDraft.audioAssetId)) {
+      if (!currentDraft.rawNotes) {
         throw new Error(t(locale, "visitNotesMissing"))
       }
       if (
@@ -789,86 +685,57 @@ export function AnalysisProcessingScreen() {
       }
 
       setActive(1)
-      // Returns as soon as the job is durably queued; the worker does the
-      // AI work, so this never waits on a model call.
-      const created =
-        currentDraft.reportId && currentDraft.report?.workflow_state === "FAILED"
-          ? await apiFetch<ReportResponse>(`/api/v1/reports/${currentDraft.reportId}/retry`, {
-              method: "POST",
-            })
-          : await apiFetch<ReportResponse>("/api/v1/reports", {
-              method: "POST",
-              headers: { "Idempotency-Key": reportKey.current },
-              body: JSON.stringify(
-                currentDraft.audioAssetId
-                  ? { visit_id: currentDraft.visitId, audio_media_asset_id: currentDraft.audioAssetId }
-                  : { visit_id: currentDraft.visitId, raw_notes: currentDraft.rawNotes },
-              ),
-            })
-      if (controller.signal.aborted) return
-      current.setDraft({
-        reportId: created.id,
-        revisionId: created.current_revision.id,
-        report: created,
-      })
-      setActive(2)
-
-      const polled = await pollReportUntilState(
-        created.id,
-        ["REVIEW_PENDING", "MANUAL_INPUT_REQUIRED", "FAILED"],
-        {
-          maxAttempts: 90,
-          signal: controller.signal,
-          onValue: (value) => {
-            current.setDraft({ report: value })
-            if (value.workflow_state === "TRANSCRIPTION_PENDING") setActive(1)
-            if (value.transcription?.transcript) {
-              current.setDraft({ rawNotes: value.transcription.transcript })
-              setActive(2)
-            }
-          },
-        },
+      const photoPairs = await Promise.all(
+        currentDraft.beforePhotoAssets.slice(0, 6).map(async (before, index) => {
+          const after = currentDraft.afterPhotoAssets[index]
+          const [beforeRecord, afterRecord] = await Promise.all([
+            getBlob(before.assetId),
+            getBlob(after.assetId),
+          ])
+          if (!beforeRecord || !afterRecord) {
+            throw new Error(t(locale, "photosMustFormPairs"))
+          }
+          return { before: beforeRecord.blob, after: afterRecord.blob }
+        }),
       )
       if (controller.signal.aborted) return
 
-      if (polled.outcome === "error") throw polled.error
-      if (polled.outcome === "timeout") {
-        throw new Error(t(locale, "analysisTakingLongerError"))
+      const context: AnalyzeContext = {
+        raw_notes: currentDraft.rawNotes,
+        customer_name: currentDraft.customerName,
+        customer_address: currentDraft.customerAddress,
+        customer_service_type: currentDraft.customerServiceType,
+        gps_lat: currentDraft.gpsLat ?? null,
+        gps_lon: currentDraft.gpsLon ?? null,
+        currency: current.currency,
+        locale,
       }
+      setActive(2)
+      const result = await analyzeReport(context, photoPairs, controller.signal)
+      if (controller.signal.aborted) return
 
-      const report = polled.value
       current.setDraft({
-        revisionId: report.current_revision.id,
-        report,
-        workCompleted: report.current_revision.work_completed,
-        amount:
-          report.current_revision.amount_cents === null
-            ? ""
-            : String(report.current_revision.amount_cents / 100),
+        currency: current.currency,
+        workCompleted: result.work_completed,
+        materials: result.materials,
+        amountCents: result.suggested_amount_cents,
+        estimatedWorkUnits: result.estimated_work_units,
+        aiConfidence: result.confidence,
+        visualComparison: result.visual_comparison,
+        amountConfirmed: false,
       })
-      if (report.workflow_state === "MANUAL_INPUT_REQUIRED") {
-        current.replace("editReport", {
-          ...current.frameParams,
-          manual: true,
-          parked: true,
-        })
-        return
-      }
-      if (report.workflow_state === "FAILED") {
-        const presentation = analysisFailurePresentation(report.workflow_error)
-        setCanRetry(presentation.retryable)
-        throw new Error(t(locale, presentation.messageKey))
-      }
-      current.replace("reportDraft", current.frameParams)
+      current.replace("reportDraft")
     }
 
     runAnalysis().catch((reason: unknown) => {
       if (controller.signal.aborted) return
-      setError(reason instanceof Error ? reason.message : t(locale, "couldNotAnalyseVisit"))
+      const presentation = analysisErrorMessage(locale, reason)
+      setCanRetry(presentation.retryable)
+      setError(presentation.message)
     })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [analysisKey, attempt])
+  }, [attempt])
 
   if (error) {
     return (
@@ -881,12 +748,12 @@ export function AnalysisProcessingScreen() {
         </h2>
         <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">{error}</p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <Button variant="secondary" onClick={() => replace("afterPhotos", frame.params)}>
+          <Button variant="secondary" onClick={() => replace("afterPhotos")}>
             {t(locale, "reviewPhotosBtn")}
           </Button>
           <Button
             variant="secondary"
-            onClick={() => navigate("editReport", { ...frame.params, manual: true })}
+            onClick={() => navigate("editReport", { manual: true })}
           >
             {t(locale, "writeManuallyBtn")}
           </Button>
@@ -961,47 +828,12 @@ export function AnalysisProcessingScreen() {
 /* --------------------------- REPORT DRAFT ----------------------------- */
 
 export function ReportDraftScreen() {
-  const { back, navigate, replace, frame, draft, setDraft, locale } = useNav()
-  const customer = useCustomer()
-  const report = draft.report
-  const revision = report?.current_revision
-  const [confirming, setConfirming] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const confirmKey = useRef(crypto.randomUUID())
+  const { back, navigate, replace, draft, setDraft, locale } = useNav()
+  const comparison = draft.visualComparison
 
-  const comparison = revision?.visual_comparison ?? null
-
-  async function confirmAndContinue() {
-    if (!draft.reportId) return
-    setConfirming(true)
-    setError(null)
-    try {
-      const confirmed = revision?.confirmed_by_user_at
-        ? report
-        : await apiFetch<ReportResponse>(`/api/v1/reports/${draft.reportId}/confirm`, {
-            method: "POST",
-            headers: { "Idempotency-Key": confirmKey.current },
-          })
-      if (confirmed) setDraft({ report: confirmed })
-      navigate("signature", frame.params)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t(locale, "couldNotConfirmReport"))
-    } finally {
-      setConfirming(false)
-    }
-  }
-
-  async function rerunAnalysis() {
-    if (!draft.reportId) return
-    setError(null)
-    try {
-      await apiFetch<ReportResponse>(`/api/v1/reports/${draft.reportId}/retry`, {
-        method: "POST",
-      })
-      replace("analysisProcessing", frame.params)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t(locale, "couldNotRerunAnalysis"))
-    }
+  function confirmAndContinue() {
+    setDraft({ amountConfirmed: true })
+    navigate("signature")
   }
 
   return (
@@ -1017,20 +849,16 @@ export function ReportDraftScreen() {
       <Page width="form">
         <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2.5">
           <Sparkles className="size-4 text-muted-foreground" />
-          <p className="text-xs text-muted-foreground">
-            {revision?.source === "ai"
-              ? t(locale, "aiDraftNotice")
-              : t(locale, "reviewConfirmNotice")}
-          </p>
+          <p className="text-xs text-muted-foreground">{t(locale, "aiDraftNotice")}</p>
         </div>
 
         <SectionLabel>
           <span className="mt-5 block">{t(locale, "visitLabel")}</span>
         </SectionLabel>
         <Card className="p-4">
-          <p className="text-sm font-semibold text-foreground">{customer.name}</p>
+          <p className="text-sm font-semibold text-foreground">{draft.customerName}</p>
           <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-            <MapPin className="size-3" /> {customer.address}
+            <MapPin className="size-3" /> {draft.customerAddress}
           </p>
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1"><Calendar className="size-3" /> {new Intl.DateTimeFormat(locale, { year: "numeric", month: "short", day: "numeric" }).format(new Date())}</span>
@@ -1039,15 +867,13 @@ export function ReportDraftScreen() {
           </div>
         </Card>
 
-        <EditableSection title={t(locale, "workCompletedLabel")} editLabel={t(locale, "editBtn")} onEdit={() => navigate("editReport", frame.params)}>
-          <p className="text-sm leading-relaxed text-foreground">
-            {revision?.work_completed || draft.workCompleted}
-          </p>
+        <EditableSection title={t(locale, "workCompletedLabel")} editLabel={t(locale, "editBtn")} onEdit={() => navigate("editReport")}>
+          <p className="text-sm leading-relaxed text-foreground">{draft.workCompleted}</p>
         </EditableSection>
 
-        <EditableSection title={t(locale, "materialsLabel")} editLabel={t(locale, "editBtn")} onEdit={() => navigate("editReport", frame.params)}>
+        <EditableSection title={t(locale, "materialsLabel")} editLabel={t(locale, "editBtn")} onEdit={() => navigate("editReport")}>
           <ul className="space-y-1.5 text-sm text-foreground">
-            {(revision?.materials ?? []).map((material) => (
+            {draft.materials.map((material) => (
               <li key={`${material.label}-${material.qty}`} className="flex justify-between">
                 <span>{material.label}</span>
                 <span className="text-muted-foreground">×{material.qty}</span>
@@ -1056,11 +882,11 @@ export function ReportDraftScreen() {
           </ul>
         </EditableSection>
 
-        <EditableSection title={t(locale, "amountLabel")} editLabel={t(locale, "editBtn")} onEdit={() => navigate("editReport", frame.params)}>
+        <EditableSection title={t(locale, "amountLabel")} editLabel={t(locale, "editBtn")} onEdit={() => navigate("editReport")}>
           <p className="font-mono text-2xl font-semibold text-foreground">
-            {revision?.amount_cents === null || revision === undefined
+            {draft.amountCents === null
               ? t(locale, "notSpecified")
-              : formatCurrency(locale, revision.amount_cents / 100, revision.currency)}
+              : formatCurrency(locale, draft.amountCents / 100, draft.currency)}
           </p>
         </EditableSection>
 
@@ -1161,19 +987,18 @@ export function ReportDraftScreen() {
         )}
       </Page>
       <FlowFooter>
-        {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
         <div className="space-y-2.5">
-          <Button size="lg" fullWidth iconRight={ArrowRight} disabled={confirming} onClick={confirmAndContinue}>
-            {confirming ? t(locale, "confirmingEllipsis") : t(locale, "confirmAndSignBtn")}
+          <Button size="lg" fullWidth iconRight={ArrowRight} onClick={confirmAndContinue}>
+            {t(locale, "confirmAndSignBtn")}
           </Button>
           <div className="grid grid-cols-3 gap-2">
-            <Button variant="secondary" icon={Pencil} onClick={() => navigate("editReport", frame.params)}>
+            <Button variant="secondary" icon={Pencil} onClick={() => navigate("editReport")}>
               {t(locale, "editBtn")}
             </Button>
-            <Button variant="secondary" onClick={() => replace("beforePhotos", frame.params)}>
+            <Button variant="secondary" onClick={() => replace("beforePhotos")}>
               {t(locale, "recaptureBtn")}
             </Button>
-            <Button variant="secondary" onClick={rerunAnalysis}>
+            <Button variant="secondary" onClick={() => replace("analysisProcessing")}>
               {t(locale, "rerunBtn")}
             </Button>
           </div>
@@ -1211,116 +1036,26 @@ function EditableSection({
 
 export function EditReportScreen() {
   const { back, replace, frame, draft, setDraft, locale } = useNav()
-  const typingNotes = Boolean(frame.params.manual) && !draft.reportId
-  const parked = Boolean(frame.params.parked)
-  const [work, setWork] = useState(
-    (parked
-      ? draft.rawNotes
-      : Boolean(frame.params.manual)
-      ? draft.rawNotes
-      : draft.report?.current_revision.work_completed || draft.workCompleted) || "",
-  )
-  const [amount, setAmount] = useState(
-    draft.report?.current_revision.amount_cents === null
-      ? ""
-      : draft.amount ||
-          (draft.report?.current_revision.amount_cents === undefined
-            ? ""
-            : String(draft.report.current_revision.amount_cents / 100)),
-  )
+  const typingNotes = Boolean(frame.params.manual) && !draft.workCompleted
+  const [work, setWork] = useState(typingNotes ? draft.rawNotes : draft.workCompleted)
+  const [amount, setAmount] = useState(draft.amountCents === null ? "" : String(draft.amountCents / 100))
   const [materials, setMaterials] = useState(
-    draft.report?.current_revision.materials.map((material) => ({
-      id: crypto.randomUUID(),
-      ...material,
-    })) ?? [],
+    draft.materials.map((material) => ({ id: crypto.randomUUID(), ...material })),
   )
-  const [saving, setSaving] = useState(false)
-  const [retrying, setRetrying] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const updateKey = useRef(crypto.randomUUID())
-  const confirmKey = useRef(crypto.randomUUID())
 
-  async function retryAnalysis() {
-    if (!draft.reportId) return
-    setRetrying(true)
-    setError(null)
-    try {
-      await apiFetch<ReportResponse>(`/api/v1/reports/${draft.reportId}/retry`, {
-        method: "POST",
-      })
-      replace("analysisProcessing", frame.params)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t(locale, "couldNotRetryAnalysis"))
-    } finally {
-      setRetrying(false)
-    }
-  }
-
-  async function save() {
-    if (parked && draft.reportId) {
-      if (work.trim().length < 20) {
-        setError(t(locale, "tooShortHint"))
-        return
-      }
-      setSaving(true)
-      setError(null)
-      try {
-        const resumed = await apiFetch<ReportResponse>(
-          `/api/v1/reports/${draft.reportId}/transcription/manual`,
-          { method: "POST", body: JSON.stringify({ raw_notes: work }) },
-        )
-        setDraft({ rawNotes: work, report: resumed })
-        replace("analysisProcessing", frame.params)
-      } catch (reason) {
-        setError(reason instanceof Error ? reason.message : t(locale, "couldNotRetryAnalysis"))
-      } finally {
-        setSaving(false)
-      }
-      return
-    }
+  function save() {
     if (typingNotes) {
       setDraft({ rawNotes: work })
-      replace("analysisProcessing", frame.params)
+      replace("analysisProcessing")
       return
     }
-    if (!draft.reportId || !draft.report) return
-    setSaving(true)
-    setError(null)
-    try {
-      const updated = await apiFetch<ReportResponse>(
-        `/api/v1/reports/${draft.reportId}/revision`,
-        {
-          method: "PATCH",
-          headers: { "Idempotency-Key": updateKey.current },
-          body: JSON.stringify({
-            work_completed: work,
-            amount_cents: amount ? Math.round(Number(amount) * 100) : null,
-            currency: draft.report.current_revision.currency,
-            materials: materials
-              .filter((material) => material.label.trim())
-              .map(({ label, qty }) => ({ label, qty })),
-          }),
-        },
-      )
-      const confirmed = await apiFetch<ReportResponse>(
-        `/api/v1/reports/${draft.reportId}/confirm`,
-        {
-          method: "POST",
-          headers: { "Idempotency-Key": confirmKey.current },
-        },
-      )
-      setDraft({
-        workCompleted: work,
-        amount,
-        revisionId: confirmed.current_revision.id,
-        report: { ...updated, ...confirmed },
-      })
-      replace("reportDraft", frame.params)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t(locale, "couldNotSaveReport"))
-    } finally {
-      setSaving(false)
-    }
+    setDraft({
+      workCompleted: work,
+      amountCents: amount ? Math.round(Number(amount) * 100) : null,
+      materials: materials.filter((material) => material.label.trim()).map(({ label, qty }) => ({ label, qty })),
+      amountConfirmed: true,
+    })
+    replace("reportDraft")
   }
 
   return (
@@ -1335,29 +1070,6 @@ export function EditReportScreen() {
         }
       />
       <Page width="form">
-        {parked && (
-          <Card className="mb-5 p-4">
-            <div className="flex gap-3">
-              <TriangleAlert className="size-5 shrink-0 text-warning" />
-              <div>
-                <p className="text-sm font-semibold text-foreground">
-                  {t(locale, "aiCouldNotFinish")}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t(locale, "aiCouldNotFinishDesc")}
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <Button variant="secondary" onClick={() => replace("beforePhotos", frame.params)}>
-                {t(locale, "reviewPhotosBtn")}
-              </Button>
-              <Button variant="secondary" disabled={retrying} onClick={retryAnalysis}>
-                {retrying ? t(locale, "retryingEllipsis") : t(locale, "retryAnalysisBtn")}
-              </Button>
-            </div>
-          </Card>
-        )}
         <label className="block">
           <span className="mb-1.5 block text-sm font-medium text-muted-foreground">
             {t(locale, "workCompletedLabel")}
@@ -1370,68 +1082,71 @@ export function EditReportScreen() {
           />
         </label>
 
-        <div className="mt-5">
-          <div className="mb-2 flex items-center justify-between">
-            <SectionLabel>{t(locale, "materialsLabel")}</SectionLabel>
-            <button
-              onClick={() => setMaterials((m) => [...m, { id: crypto.randomUUID(), label: "", qty: "1" }])}
-              className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
-            >
-              <Plus className="size-3" /> {t(locale, "addBtn")}
-            </button>
-          </div>
-          <div className="space-y-2">
-            {materials.map((m) => (
-              <div key={m.id} className="flex items-center gap-2">
-                <input
-                  value={m.label}
-                  onChange={(event) =>
-                    setMaterials((list) =>
-                      list.map((item) =>
-                        item.id === m.id ? { ...item, label: event.target.value } : item,
-                      ),
-                    )
-                  }
-                  placeholder={t(locale, "materialPlaceholder")}
-                  className="h-11 flex-1 rounded-xl border border-input bg-card px-3 text-sm text-foreground focus:border-ring focus:outline-none"
-                />
-                <input
-                  value={m.qty}
-                  onChange={(event) =>
-                    setMaterials((list) =>
-                      list.map((item) =>
-                        item.id === m.id ? { ...item, qty: event.target.value } : item,
-                      ),
-                    )
-                  }
-                  className="h-11 w-14 rounded-xl border border-input bg-card px-3 text-center text-sm text-foreground focus:border-ring focus:outline-none"
-                />
+        {!typingNotes && (
+          <>
+            <div className="mt-5">
+              <div className="mb-2 flex items-center justify-between">
+                <SectionLabel>{t(locale, "materialsLabel")}</SectionLabel>
                 <button
-                  onClick={() => setMaterials((list) => list.filter((x) => x.id !== m.id))}
-                  aria-label={t(locale, "removeMaterialLabel")}
-                  className="grid size-11 place-items-center rounded-xl text-muted-foreground hover:text-destructive"
+                  onClick={() => setMaterials((m) => [...m, { id: crypto.randomUUID(), label: "", qty: "1" }])}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
                 >
-                  <Trash2 className="size-4" />
+                  <Plus className="size-3" /> {t(locale, "addBtn")}
                 </button>
               </div>
-            ))}
-          </div>
-        </div>
+              <div className="space-y-2">
+                {materials.map((m) => (
+                  <div key={m.id} className="flex items-center gap-2">
+                    <input
+                      value={m.label}
+                      onChange={(event) =>
+                        setMaterials((list) =>
+                          list.map((item) =>
+                            item.id === m.id ? { ...item, label: event.target.value } : item,
+                          ),
+                        )
+                      }
+                      placeholder={t(locale, "materialPlaceholder")}
+                      className="h-11 flex-1 rounded-xl border border-input bg-card px-3 text-sm text-foreground focus:border-ring focus:outline-none"
+                    />
+                    <input
+                      value={m.qty}
+                      onChange={(event) =>
+                        setMaterials((list) =>
+                          list.map((item) =>
+                            item.id === m.id ? { ...item, qty: event.target.value } : item,
+                          ),
+                        )
+                      }
+                      className="h-11 w-14 rounded-xl border border-input bg-card px-3 text-center text-sm text-foreground focus:border-ring focus:outline-none"
+                    />
+                    <button
+                      onClick={() => setMaterials((list) => list.filter((x) => x.id !== m.id))}
+                      aria-label={t(locale, "removeMaterialLabel")}
+                      className="grid size-11 place-items-center rounded-xl text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
 
-        <div className="mt-5">
-          <AmountField
-            label={t(locale, "amountChargedLabel")}
-            currencySymbol={currencySymbol(draft.report?.current_revision.currency)}
-            value={amount}
-            onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
-            placeholder="0"
-          />
-        </div>
-        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+            <div className="mt-5">
+              <AmountField
+                label={t(locale, "amountChargedLabel")}
+                currencySymbol={currencySymbol(draft.currency)}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+                placeholder="0"
+              />
+            </div>
+          </>
+        )}
       </Page>
       <FlowFooter>
-        <Button size="lg" fullWidth icon={Check} disabled={saving} onClick={save}>
-          {typingNotes ? t(locale, "useTheseNotesBtn") : saving ? t(locale, "savingChangesEllipsis") : t(locale, "saveChangesBtn")}
+        <Button size="lg" fullWidth icon={Check} onClick={save}>
+          {typingNotes ? t(locale, "useTheseNotesBtn") : t(locale, "saveChangesBtn")}
         </Button>
       </FlowFooter>
     </>
@@ -1459,110 +1174,79 @@ function ResultList({ title, items }: { title: string; items: string[] }) {
 /* ------------------------------ SIGNATURE ----------------------------- */
 
 export function SignatureScreen() {
-  const { back, navigate, frame, draft, setDraft, locale } = useNav()
+  const { back, navigate, draft, setDraft, locale } = useNav()
   const [hasInk, setHasInk] = useState(false)
-  const [signerName, setSignerName] = useState(() => t(locale, "defaultSignerName"))
+  const [signerName, setSignerName] = useState(() => draft.signerName ?? t(locale, "defaultSignerName"))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const signatureRef = useRef<SignatureCanvasHandle>(null)
-  const readyKey = useRef(crypto.randomUUID())
-  const uploadKey = useRef(crypto.randomUUID())
-  const attachKey = useRef(crypto.randomUUID())
-  const signKey = useRef(crypto.randomUUID())
-  const customer = useCustomer()
-
-  async function waitForCompletion() {
-    if (!draft.reportId) return false
-    const polled = await pollReportUntilState(
-      draft.reportId,
-      ["COMPLETED", "MANUAL_INPUT_REQUIRED"],
-      { maxAttempts: 60 },
-    )
-    if (polled.outcome !== "terminal") return false
-    setDraft({ report: polled.value })
-    if (polled.value.workflow_state === "MANUAL_INPUT_REQUIRED") {
-      throw new Error(t(locale, "pdfNotAvailable"))
-    }
-    navigate("completed", frame.params)
-    return true
-  }
 
   async function finishReport() {
-    if (!draft.reportId) return
+    if (!draft.amountConfirmed) return
     setSaving(true)
     setError(null)
     try {
-      let report = draft.report
-      if (report?.workflow_state === "COMPLETED") {
-        navigate("completed", frame.params)
-        return
-      }
-      if (report?.workflow_state === "PDF_PENDING") {
-        if (!(await waitForCompletion())) {
-          throw new Error(t(locale, "pdfTimedOut"))
-        }
-        return
-      }
-      if (report?.workflow_state !== "SIGNATURE_PENDING") {
-        report = await apiFetch<ReportResponse>(
-          `/api/v1/reports/${draft.reportId}/ready-for-signature`,
-          {
-            method: "POST",
-            headers: { "Idempotency-Key": readyKey.current },
-          },
-        )
-        setDraft({ report })
-      }
-
       const png = await signatureRef.current?.exportPng()
       if (!png) throw new Error(t(locale, "signatureRequired"))
-      const digest = await crypto.subtle.digest("SHA-256", await png.arrayBuffer())
-      const sha256 = Array.from(new Uint8Array(digest), (byte) =>
-        byte.toString(16).padStart(2, "0"),
-      ).join("")
-      const upload = await apiFetch<MediaUploadResponse>("/api/v1/media/uploads", {
-        method: "POST",
-        headers: { "Idempotency-Key": uploadKey.current },
-        body: JSON.stringify({
-          content_type: "image/png",
-          byte_size: png.size,
-          sha256,
-          kind: "signature",
-          report_id: draft.reportId,
-        }),
-      })
-      const uploadResponse = await fetch(upload.upload_url, {
-        method: "PUT",
-        headers: { "Content-Type": "image/png", "x-amz-meta-sha256": sha256 },
-        body: png,
-      })
-      if (!uploadResponse.ok) throw new Error(t(locale, "signatureUploadFailed"))
-      await apiFetch(`/api/v1/media/${upload.media_asset_id}/attach`, {
-        method: "POST",
-        headers: { "Idempotency-Key": attachKey.current },
-      })
-      const signed = await apiFetch<ReportResponse>(
-        `/api/v1/reports/${draft.reportId}/sign`,
-        {
-          method: "POST",
-          headers: { "Idempotency-Key": signKey.current },
-          body: JSON.stringify({
-            signer_name: signerName,
-            signature_media_asset_id: upload.media_asset_id,
-          }),
-        },
-      )
-      setDraft({
-        signed: true,
-        signatureAssetId: upload.media_asset_id,
-        report: signed,
-      })
 
-      if (!(await waitForCompletion())) {
-        throw new Error(t(locale, "pdfTimedOut"))
-      }
+      const humanId = humanReportId(draft.id)
+      const nowIso = new Date().toISOString()
+      const pdfBlob = await renderCheckPdf(
+        {
+          report_number: humanId,
+          customer_name: draft.customerName,
+          customer_address: draft.customerAddress,
+          customer_phone: draft.customerPhone,
+          customer_service_type: draft.customerServiceType,
+          timestamp: nowIso,
+          gps_lat: draft.gpsLat ?? null,
+          gps_lon: draft.gpsLon ?? null,
+          work_completed: draft.workCompleted,
+          materials: draft.materials,
+          amount_cents: draft.amountCents,
+          currency: draft.currency,
+          signer_name: signerName,
+          locale,
+        },
+        png,
+      )
+      const pdfBlobId = await putBlob(draft.id, "pdf", pdfBlob, "application/pdf")
+
+      await saveCheck({
+        id: draft.id,
+        humanId,
+        customerName: draft.customerName,
+        customerAddress: draft.customerAddress,
+        customerPhone: draft.customerPhone,
+        customerServiceType: draft.customerServiceType,
+        gpsLat: draft.gpsLat ?? null,
+        gpsLon: draft.gpsLon ?? null,
+        workCompleted: draft.workCompleted,
+        materials: draft.materials,
+        amountCents: draft.amountCents,
+        currency: draft.currency,
+        visualComparison: draft.visualComparison,
+        aiConfidence: draft.aiConfidence,
+        signed: true,
+        signerName,
+        beforePhotoIds: draft.beforePhotoAssets.map((p) => p.assetId),
+        afterPhotoIds: draft.afterPhotoAssets.map((p) => p.assetId),
+        pdfBlobId,
+        completedAt: nowIso,
+      })
+      await finalizeDraft(draft.id)
+      setActiveDraftId(null)
+
+      setDraft({ signed: true, signerName, pdfBlobId, humanId, completed: true })
+      navigate("completed")
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t(locale, "couldNotSignReport"))
+      setError(
+        reason instanceof JobActApiError
+          ? reason.response.detail
+          : reason instanceof Error
+            ? reason.message
+            : t(locale, "couldNotSignReport"),
+      )
     } finally {
       setSaving(false)
     }
@@ -1574,7 +1258,7 @@ export function SignatureScreen() {
       <Page width="form">
         <Card className="p-4">
           <p className="text-sm text-muted-foreground">
-            {t(locale, "signingConfirmsText", { name: customer.name })}
+            {t(locale, "signingConfirmsText", { name: draft.customerName })}
           </p>
         </Card>
 
@@ -1594,20 +1278,15 @@ export function SignatureScreen() {
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       </Page>
       <FlowFooter>
-        <div className="space-y-2.5">
-          <Button
-            size="lg"
-            fullWidth
-            icon={Check}
-            disabled={!hasInk || !signerName.trim() || saving}
-            onClick={finishReport}
-          >
-            {saving ? t(locale, "finalizingEllipsis") : t(locale, "confirmAndFinishBtn")}
-          </Button>
-          <Button variant="ghost" size="md" fullWidth icon={Share2} onClick={() => navigate("completed", frame.params)}>
-            {t(locale, "sendLinkInsteadBtn")}
-          </Button>
-        </div>
+        <Button
+          size="lg"
+          fullWidth
+          icon={Check}
+          disabled={!hasInk || !signerName.trim() || saving}
+          onClick={finishReport}
+        >
+          {saving ? t(locale, "finalizingEllipsis") : t(locale, "confirmAndFinishBtn")}
+        </Button>
       </FlowFooter>
     </>
   )
@@ -1617,24 +1296,20 @@ export function SignatureScreen() {
 
 export function CompletedScreen() {
   const { reset, navigate, draft, locale } = useNav()
-  const customer = useCustomer()
   const [error, setError] = useState<string | null>(null)
-  const revision = draft.report?.current_revision
   const completedAmount =
-    revision?.amount_cents === null || revision?.amount_cents === undefined
-      ? t(locale, "notSpecified")
-      : formatCurrency(locale, revision.amount_cents / 100, revision.currency)
+    draft.amountCents === null ? t(locale, "notSpecified") : formatCurrency(locale, draft.amountCents / 100, draft.currency)
   const now = new Date()
 
   async function openPdf() {
-    const assetId = draft.report?.pdf_media_asset_id
-    if (!assetId) {
+    if (!draft.pdfBlobId) {
       setError(t(locale, "pdfNotAvailable"))
       return
     }
     try {
-      const result = await apiFetch<{ url: string }>(`/api/v1/media/${assetId}/url`)
-      window.location.assign(result.url)
+      const record = await getBlob(draft.pdfBlobId)
+      if (!record) throw new Error(t(locale, "pdfNotAvailable"))
+      window.open(URL.createObjectURL(record.blob), "_blank")
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t(locale, "couldNotOpenPdf"))
     }
@@ -1649,7 +1324,7 @@ export function CompletedScreen() {
 
         <Card className="mt-8 w-full p-4">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-foreground">{customer.name}</p>
+            <p className="text-sm font-semibold text-foreground">{draft.customerName}</p>
             <StatusBadge status="completed" />
           </div>
           <div className="mt-4 space-y-3 text-sm">
@@ -1661,9 +1336,8 @@ export function CompletedScreen() {
           </div>
           <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
             <span className="font-mono text-xs text-muted-foreground">
-              {draft.report?.human_id ?? t(locale, "reportFallback")}
+              {draft.humanId ?? t(locale, "reportFallback")}
             </span>
-            <SyncIndicator state="synced" />
           </div>
         </Card>
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
@@ -1675,7 +1349,7 @@ export function CompletedScreen() {
             {t(locale, "openSignedPdfBtn")}
           </Button>
           <div className="flex gap-3">
-            <Button variant="secondary" size="lg" fullWidth onClick={() => navigate("reportDetail", { reportId: draft.reportId })}>
+            <Button variant="secondary" size="lg" fullWidth onClick={() => navigate("checkDetail", { checkId: draft.id })}>
               {t(locale, "viewReportBtn")}
             </Button>
             <Button variant="ghost" size="lg" icon={House} onClick={() => reset("home")}>

@@ -5,110 +5,102 @@ This file provides guidance to Claude Code when working with code in `backend/`.
 
 ## Project
 
-JobAct's backend is a contract-first modular monolith serving one vertical slice:
-visit → AI-drafted report → real customer signature → signed PDF. See
-[`docs/architecture/overview.md`](../docs/architecture/overview.md) for the full design and
-[`docs/roadmap.md`](../docs/roadmap.md) for what is deliberately still simulated in the
-frontend (photos, GPS, voice transcription).
+JobAct's backend is three stateless HTTP endpoints (`apps/api/routers/demo.py`): transcribe
+one recording, run the unified AI analysis on one job, render one signed check PDF. There is
+no database, cache, object storage, or user session — normal application state lives in the
+browser (see [`../frontend/CLAUDE.md`](../frontend/CLAUDE.md)). See
+[`../docs/architecture/overview.md`](../docs/architecture/overview.md) for the full design and
+[ADR-0007](../docs/adr/0007-local-demo-downgrade.md) for why, and
+[`../docs/architecture/ai.md`](../docs/architecture/ai.md) for the AI/STT pipeline itself.
 
 ## Commands
 
 Run these from `backend/`. Package manager is `uv`.
 
 ```bash
-uv sync --dev                                        # install runtime + dev dependencies
+uv sync --dev                                                   # install runtime + dev dependencies
 uv run uvicorn jobact.apps.api.main:app --reload --port 8000   # run the API
-uv run python -m jobact.apps.worker                  # run the Redis Streams worker
-uv run alembic upgrade head                          # apply migrations
-uv run alembic revision -m "..." --autogenerate       # draft a new migration (review it by hand)
-uv run pytest                                        # domain/contract/workflow tests + integration tests
-uv run ruff check .                                  # lint
-uv run mypy src tests                                # type check
+uv run pytest                                                   # unit tests -- no external services needed
+uv run ruff check .                                             # lint
+uv run mypy src tests                                           # type check
 ```
 
-`docker compose up -d` (from `backend/`) starts Postgres 17, Redis 8, and MinIO (+ a one-shot
-bucket-init container). Copy `.env.example` to `.env` first and fill in `DASHSCOPE_API_KEY`
-if you want AI drafting to produce real output — everything else has working local defaults.
-Integration tests that touch Postgres/Redis/MinIO need this stack running; domain, contract,
-and workflow tests do not.
+Copy `.env.example` to `.env` first and fill in `DASHSCOPE_API_KEY` if you want `/demo/analyze`
+to produce real output — everything else has working local defaults. Without a key,
+`/demo/analyze` returns a 503 `ai-not-configured` error (the frontend shows a localized
+message with a manual-entry fallback); `/demo/transcribe` and `/demo/check-pdf` need no key at
+all. `docker compose up -d --build` (from the repo root) builds and runs the whole app
+(`api` + `frontend`, no other services).
 
-## Layering rules
+## Layering
 
 ```text
-apps/api, apps/worker        entrypoints only — routing, DI wiring, process startup
+apps/api                     entrypoint only -- routing, DI wiring, process startup
   ↓
-contexts/<name>/application   command handlers; own the UnitOfWork/transaction boundary
+apps/api/demo_service.py     the three endpoints' orchestration
   ↓
-contexts/<name>/domain        aggregates, value objects, domain events — pure Python
-  ↓ (implemented by, never imported by domain)
-contexts/<name>/infrastructure  SQLAlchemy repositories, adapters
+workflows/report_fulfillment/agent.py       Qwen drafting agent            \  protected --
+workflows/visual_audit/agent.py             Qwen visual-audit agent         > see below,
+contexts/reports/domain/pricing.py          units -> USD cents (pure)      /  do not modify
+shared/application/fx.py                    USD -> currency conversion    /
+shared/infrastructure/stt/                  faster-whisper + PyAV        /
+shared/infrastructure/pdf/                  ReportLab PDF renderer      /
+shared/infrastructure/llm/connectors.py     the Qwen connector
 ```
 
-**Domain imports nothing from infrastructure, FastAPI, SQLAlchemy, Redis, or httpx.**
-`shared/domain/` (`Entity`, `AggregateRoot`, `DomainEvent`, `ValueObject`) is the only thing a
-context's domain package may import beyond the standard library. If a domain file needs to
-import a driver or framework, the logic belongs in `application/` or `infrastructure/`
-instead.
-
-`shared/application/ports.py` defines every external dependency (`ObjectStorage`,
-`MessageBroker`, `IdentityProvider`, `PdfRenderer`, `LlmGateway`, `Clock`, `IdGenerator`) as a
-`Protocol`. Application handlers depend on these ports, never on a concrete adapter — see
-`tests/fakes.py` for the in-memory fakes used everywhere in domain/application/workflow
-tests. Only integration tests exercise the real adapters in `shared/infrastructure/`.
-
-`UnitOfWork` (`shared/application/uow.py`) is the only place a transaction commits. A command
-handler pulls domain events off the aggregate (`aggregate.pull_events()`) and the UoW writes
-them to `platform.outbox` in the *same* transaction as the aggregate's own row changes —
-never commit an aggregate change and publish its event as two separate operations.
-
-Repositories are one per aggregate root (`VisitRepository`, `ReportRepository`,
-`CustomerRepository`, `MediaAssetRepository`, ...), not one per query. Every repository
-method that reads or writes an `organization_id`-scoped row filters by the caller's
-organization itself — this is enforced at the repository, not trusted to the router.
+`shared/application/ports.py` still declares `AiConnector`/`AudioInspector`/`SpeechTranscriber`
+as `Protocol`s (structural typing) for type-hinting across the two AI calls and STT, but
+`demo_service.py` calls the concrete STT/PDF classes directly rather than through a DI
+container — there is no persistence layer left that would need to be swapped out in tests, so
+the extra indirection was removed along with it.
 
 ## Contracts
 
-`contracts/http/v1`, `contracts/workflow/v1`, `contracts/errors/v1` hold framework-free
-Pydantic DTOs versioned independently of the domain model. A route handler converts
-HTTP DTO → application command → domain call, and converts the result back — it never
-passes a domain object straight to a Pydantic response model. Within a version, only
-optional fields may be added; anything else is a new version.
+`contracts/http/v1/demo.py` holds the three endpoints' request/response Pydantic models
+(framework-free). Every mutating request is `multipart/form-data`, not JSON — every request
+carries file bytes (audio, photos, or a signature), and the non-file fields travel as a single
+`context` field containing a JSON string, parsed with `_parse_json_field()` in
+`apps/api/routers/demo.py`. `contracts/http/v1/visual_audits.py` (the `VisualAuditResult`
+shape) and `contracts/errors/v1/envelope.py` (the `{type, title, status, detail,
+correlation_id, errors}` error shape, still returned by every endpoint) are unchanged from
+Milestone 1.
 
-`tests/contract/test_reports_openapi.py` asserts the generated OpenAPI schema against a
-committed snapshot — regenerate the snapshot deliberately when the contract changes, don't
-let a diff silently drift.
+## STT and AI product logic — protected
 
-## Workflow engine
+**Do not modify** `shared/infrastructure/stt/faster_whisper.py`,
+`shared/infrastructure/stt/pyav_inspector.py`, `workflows/report_fulfillment/agent.py`,
+`workflows/visual_audit/agent.py`, `contexts/reports/domain/pricing.py`,
+`shared/application/fx.py`, or `shared/infrastructure/llm/connectors.py` without a specific,
+explicit reason to change their behavior — these are the demo's actual value-producing
+pipeline (already-working Whisper transcription; Qwen drafting + visual audit; deterministic
+work-unit pricing), not incidental plumbing. `workflows/report_fulfillment/failures.py`
+(`classify_analysis_failures`) is also load-bearing but safe to extend with new failure
+categories. See [`../docs/architecture/ai.md`](../docs/architecture/ai.md) for what each piece
+does and why. `contexts/reports/domain/` and `workflows/report_fulfillment/`,
+`workflows/visual_audit/` only contain these protected files now — everything else that used
+to live alongside them (the `Report` aggregate, the durable workflow engine, the two
+background workers) was removed in [ADR-0007](../docs/adr/0007-local-demo-downgrade.md); don't
+recreate that scaffolding to "properly" house a small change here.
 
-`workflows/report_fulfillment/` is a durable saga, not a hidden chain of Redis jobs. Its
-states live in `states.py`; `ALLOWED_TRANSITIONS` is the single source of truth for legal
-moves, and `MANUAL_INPUT_REQUIRED` is reachable from every non-terminal state but is never a
-transition's *source* — resuming a parked run is a manual, out-of-band operation. Run/step
-persistence uses optimistic locking on `state_version`; a stale write raises rather than
-silently overwriting a concurrent transition. Activities take and return strict DTOs from
-`contracts/workflow/v1` and must be safe to retry (id-driven idempotency, not "run twice by
-accident" tolerance).
-
-## AI drafting
-
-See [`docs/architecture/ai.md`](../docs/architecture/ai.md) for the full design. The load-bearing
-invariant is in the domain, not the prompt: `Report.mark_ready_for_signature()` raises unless
-the current revision has both `confirmed_by_user_at` and `amount_confirmed_at` set, so an
-AI-proposed amount can never reach a signed document without an explicit human confirmation.
-Do not relax this for convenience — see ADR-0006 and the AI design doc for why.
-
-The drafting model itself never emits a price — it returns `estimated_work_units`, and
-`contexts/reports/domain/pricing.py` deterministically converts that into a suggested
-`amount_cents` at a fixed USD rate. Keep that arithmetic in application/domain code, not the
-prompt, so the pricing rule stays explicit, testable, and easy to change.
+The human-confirmation safety invariant that used to live in
+`Report.mark_ready_for_signature()` (a domain-layer guard) is now a frontend precondition —
+see [`../docs/architecture/ai.md`](../docs/architecture/ai.md#the-safety-invariant). If you're
+touching the signature/confirmation flow, that's `frontend/components/jobact/screens/flow.tsx`,
+not this codebase.
 
 ## Testing conventions
 
-- `tests/domain/`, `tests/application/`, `tests/workflow/` — no real Postgres/Redis/MinIO;
-  use the fakes in `tests/fakes.py`.
-- `tests/contract/` — OpenAPI snapshot and schema shape assertions.
-- `tests/integration/` — real Postgres/Redis/MinIO via `docker compose up -d`; a fake drafting
-  function still stands in for the live model everywhere in this suite.
-- An opt-in live-model smoke test (`JOBACT_LIVE_LLM_TESTS=1`) is called for by the plan but
-  not yet written — see [`docs/architecture/ai.md`](../docs/architecture/ai.md). Never add
-  one that runs by default in CI.
+- `tests/domain/reports/test_pricing.py`, `tests/unit/test_fx.py` — pure-function tests for
+  the deterministic pricing/currency conversion.
+- `tests/unit/test_report_drafting_agent.py`, `tests/unit/test_visual_audit_agent.py` — the two
+  agents' own structured-output/prompt-building behavior, via PydanticAI's `TestModel` (no
+  network).
+- `tests/unit/test_reportlab_renderer.py` — the PDF renderer.
+- `tests/unit/test_demo_service.py`, `tests/unit/test_demo_router.py` — the three endpoints,
+  with fakes for the transcriber/connector.
+- `tests/unit/test_analysis_failures.py` — failure classification.
+- `tests/unit/test_ai_connector_selection.py`, `test_ai_runtime_configuration.py` — the Qwen
+  connector and `Settings` defaults.
+
+No test in this suite calls a live model or needs Docker/Postgres/Redis running — everything
+above is `uv run pytest`-able with no setup beyond `uv sync --dev`.

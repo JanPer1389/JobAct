@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted, implemented (Milestone 1).
+Accepted, implemented (Milestone 1). **Superseded for normal demo operation by
+[ADR-0007](0007-local-demo-downgrade.md)** — kept here as the historical record of
+Milestone 1's production-shaped design; still the reference design for a future real
+deployment.
 
 ## Context
 

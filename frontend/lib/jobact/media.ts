@@ -1,4 +1,4 @@
-import { apiFetch, type MediaUploadResponse } from "@/lib/jobact/api"
+import { putBlob } from "@/lib/jobact/local-store"
 import type { DraftPhoto } from "@/lib/jobact/store"
 
 const MAX_EDGE = 2048
@@ -31,66 +31,25 @@ async function normalizeToJpeg(file: File): Promise<Blob> {
   }
 }
 
-async function sha256Hex(blob: Blob): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer())
-  return Array.from(new Uint8Array(digest), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("")
-}
-
-export async function uploadVisitPhoto(
+/** Normalize a captured photo to a bounded JPEG and store it in
+ * IndexedDB, scoped to the draft it belongs to. The returned `assetId`
+ * is a local blob id (`local-store.ts`'s `LocalBlobRecord.id`), not a
+ * server-issued one -- there is no server-side media store anymore. */
+export async function saveVisitPhoto(
   file: File,
   phase: "before" | "after",
-  visitId: string,
+  draftId: string,
 ): Promise<DraftPhoto> {
   const jpeg = await normalizeToJpeg(file)
-  const sha256 = await sha256Hex(jpeg)
-  const upload = await apiFetch<MediaUploadResponse>("/api/v1/media/uploads", {
-    method: "POST",
-    body: JSON.stringify({
-      content_type: "image/jpeg",
-      byte_size: jpeg.size,
-      sha256,
-      kind: "photo",
-      phase,
-      visit_id: visitId,
-    }),
-  })
-  const response = await fetch(upload.upload_url, {
-    method: "PUT",
-    headers: { "Content-Type": "image/jpeg", "x-amz-meta-sha256": sha256 },
-    body: jpeg,
-  })
-  if (!response.ok) throw new Error("Photo upload failed.")
-  await apiFetch(`/api/v1/media/${upload.media_asset_id}/attach`, { method: "POST" })
-  return { assetId: upload.media_asset_id, previewUrl: URL.createObjectURL(jpeg) }
+  const assetId = await putBlob(draftId, phase, jpeg, "image/jpeg")
+  return { assetId, previewUrl: URL.createObjectURL(jpeg) }
 }
 
 const AUDIO_TYPES = new Set(["audio/webm", "audio/mp4"])
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024
 
-/** Upload a finished microphone recording directly to the private media store. */
-export async function uploadVisitAudio(file: File, visitId: string): Promise<string> {
+export function validateVisitAudio(file: File): void {
   if (!AUDIO_TYPES.has(file.type) || file.size === 0 || file.size > MAX_AUDIO_BYTES) {
     throw new Error("The recording must be WebM/Opus or MP4/AAC and no larger than 25 MiB.")
   }
-  const sha256 = await sha256Hex(file)
-  const upload = await apiFetch<MediaUploadResponse>("/api/v1/media/uploads", {
-    method: "POST",
-    body: JSON.stringify({
-      content_type: file.type,
-      byte_size: file.size,
-      sha256,
-      kind: "audio",
-      visit_id: visitId,
-    }),
-  })
-  const response = await fetch(upload.upload_url, {
-    method: "PUT",
-    headers: { "Content-Type": file.type, "x-amz-meta-sha256": sha256 },
-    body: file,
-  })
-  if (!response.ok) throw new Error("Audio upload failed.")
-  await apiFetch(`/api/v1/media/${upload.media_asset_id}/attach`, { method: "POST" })
-  return upload.media_asset_id
 }

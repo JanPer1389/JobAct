@@ -467,6 +467,23 @@ const translations = {
     loadingReportEllipsis: "Loading report…",
     reportTitleFallback: "Report",
     revisionNumberLabel: "Revision {n}",
+
+    // Demo entry / simplified home
+    demoEntryTagline: "Turn a finished job into a signed customer check.",
+    yourNameLabel: "Your name",
+    yourNamePlaceholder: "Technician",
+    demoContinueBtn: "Continue",
+    createCheckCta: "Create a check",
+    resumeDraftLabel: "Resume draft",
+    recentChecksTitle: "Recent checks",
+    noChecksYet: "No checks yet",
+    noChecksYetDesc: "Checks you complete will show up here.",
+    viewAllChecks: "View all",
+    localDataNotice: "Everything is stored on this device only.",
+    storageFullTitle: "Local storage is full",
+    storageFullDesc: "Delete an old check to free up space, then try again.",
+    deleteAction: "Delete",
+    checkFallback: "Check",
   },
   "ru-RU": {
     ok: "ОК",
@@ -883,6 +900,23 @@ const translations = {
     loadingReportEllipsis: "Загрузка отчёта…",
     reportTitleFallback: "Отчёт",
     revisionNumberLabel: "Версия {n}",
+
+    // Demo entry / simplified home
+    demoEntryTagline: "Превратите выполненную работу в подписанный чек для клиента.",
+    yourNameLabel: "Ваше имя",
+    yourNamePlaceholder: "Мастер",
+    demoContinueBtn: "Продолжить",
+    createCheckCta: "Создать чек",
+    resumeDraftLabel: "Продолжить черновик",
+    recentChecksTitle: "Последние чеки",
+    noChecksYet: "Пока нет чеков",
+    noChecksYetDesc: "Завершённые чеки появятся здесь.",
+    viewAllChecks: "Все чеки",
+    localDataNotice: "Все данные хранятся только на этом устройстве.",
+    storageFullTitle: "Локальное хранилище заполнено",
+    storageFullDesc: "Удалите старый чек, чтобы освободить место, и попробуйте снова.",
+    deleteAction: "Удалить",
+    checkFallback: "Чек",
   },
 } as const
 
